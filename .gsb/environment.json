@@ -1,0 +1,6 @@
+{
+  "python": "3.12.13",
+  "original_repo_url": "https://github.com/kurtmckee/feedparser",
+  "upstream_sha": "a22c5521cbb109871f1a2318948581901bd47e26",
+  "test_scope": "full upstream tests directory; eight upstream skips retained"
+}

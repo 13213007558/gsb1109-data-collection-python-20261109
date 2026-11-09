@@ -1,0 +1,17 @@
+.idea/
+.mypy_cache/
+.tox/
+.venv/
+.vscode/
+
+build/
+dist/
+htmlcov/
+
+*.egg-info/
+
+.coverage*
+*.html
+*.pyc
+
+poetry.lock

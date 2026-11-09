@@ -1,0 +1,5 @@
+Project development
+-------------------
+
+*   Update CI to minimize total run time.
+    (The total run time dropped from ~37 minutes to ~8 minutes with cache hits.)

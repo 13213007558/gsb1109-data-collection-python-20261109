@@ -1,0 +1,11 @@
+[tool.poetry]
+package-mode = false
+
+[project]
+name = "dependencies"
+requires-python = ">=3.10"
+dependencies = [
+    "mypy",
+    "types-chardet",
+    "types-requests",
+]

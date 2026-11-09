@@ -1,0 +1,18 @@
+version: 2
+
+# Set the version of Python and other tools you might need
+build:
+  os: "ubuntu-24.04"
+  tools:
+    python: "3.13"
+
+# Build documentation in the docs/ directory with Sphinx.
+sphinx:
+  builder: "dirhtml"
+  configuration: "docs/conf.py"
+  fail_on_warning: true
+
+# Use exact package and dependency versions.
+python:
+  install:
+    - requirements: "requirements/docs/requirements.txt"

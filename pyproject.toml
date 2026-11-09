@@ -1,0 +1,113 @@
+[project]
+name = "feedparser"
+version = "6.0.14"
+description = "Parse Atom/RSS/JSON feeds in Python"
+readme = "README.rst"
+requires-python = ">=3.10"
+authors = [
+    { name = "Kurt McKee", email = "contactme@kurtmckee.org" }
+]
+license = "BSD-2-Clause"
+keywords = ["atom", "feed", "json", "rdf", "rss"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Topic :: Text Processing :: Markup",
+]
+dependencies = [
+    "feedparser-sgmllib (>=2, <3)",
+    "requests>=2.20.0",
+]
+
+[project.urls]
+Source = "https://github.com/kurtmckee/feedparser"
+Documentation = "https://feedparser.readthedocs.io/en/latest/"
+Changelog = "https://feedparser.readthedocs.io/en/latest/changelog/"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+
+# coverage
+# --------
+
+[tool.coverage.run]
+parallel = true
+branch = true
+source = [
+    "feedparser",
+    "tests",
+]
+
+[tool.coverage.paths]
+source = [
+    "src",
+    "*/site-packages",
+]
+
+[tool.coverage.report]
+skip_covered = true
+fail_under = 93
+
+[tool.coverage.html]
+directory = "htmlcov/"
+
+
+# flake8
+# ------
+
+[tool.flake8]
+max-line-length = 80
+extend-select = ["B950"]
+extend-ignore = ["E203", "E501", "E701"]
+
+
+# isort
+# -----
+
+[tool.isort]
+profile = "black"
+
+
+# mypy
+# ----
+
+[tool.mypy]
+packages = "feedparser"
+show_error_codes = true
+sqlite_cache = true
+
+
+# pytest
+# ------
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "error",
+]
+
+
+# scriv
+# -----
+
+[tool.scriv]
+version = "literal: pyproject.toml: project.version"
+categories = [
+    "Breaking changes",
+    "Python support",
+    "Added",
+    "Fixed",
+    "Removed",
+    "Changed",
+    "Deprecated",
+    "Security",
+    "Documentation",
+    "Project development",
+]
+entry_title_template = "{{ version }} - {{ date.strftime('%Y-%m-%d') }}"
+format = "rst"
+fragment_directory = "changelog.d"
+insert_marker = "scriv-insert-here"
+main_branches = ["develop", "master"]
+new_fragment_template = "file: fragment-template.rst.txt"

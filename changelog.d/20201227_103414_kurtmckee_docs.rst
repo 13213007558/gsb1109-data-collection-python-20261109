@@ -1,0 +1,4 @@
+Documentation
+-------------
+
+*   Remove u-prefixes from strings in example code in the documentation.
