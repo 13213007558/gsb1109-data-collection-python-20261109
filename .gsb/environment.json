@@ -1,0 +1,6 @@
+{
+  "python": "3.12.13",
+  "original_repo_url": "https://github.com/MechanicalSoup/MechanicalSoup",
+  "upstream_sha": "385962b0b091b7dc99938435874d4651c7cc7d04",
+  "test_scope": "31 offline form tests; upstream HTTP-bin tests excluded"
+}

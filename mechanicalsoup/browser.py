@@ -1,0 +1,416 @@
+import io
+import os
+import re
+import tempfile
+from typing import cast
+import urllib.parse
+import weakref
+import webbrowser
+
+import bs4
+import bs4.dammit
+import requests
+
+from .__version__ import __title__, __version__
+from .form import Form
+from .utils import LinkNotFoundError, is_disabled, is_multipart_file_upload
+
+
+class ResponseWithSoup(requests.Response):
+    soup: bs4.BeautifulSoup | None
+
+
+class Browser:
+    """Builds a low-level Browser.
+
+    It is recommended to use :class:`StatefulBrowser` for most applications,
+    since it offers more advanced features and conveniences than Browser.
+
+    :param session: Attach a pre-existing requests Session instead of
+        constructing a new one.
+    :param soup_config: Configuration passed to BeautifulSoup to affect
+        the way HTML is parsed. Defaults to ``{'features': 'lxml'}``.
+        Select the HTML parser with the ``features`` key, for example
+        ``soup_config={'features': 'html.parser'}`` to use Python's built-in
+        parser. Other choices include ``'lxml'`` and ``'html5lib'``;
+        the corresponding parser package must be installed (``lxml`` is
+        installed as a MechanicalSoup dependency).
+        See BeautifulSoup's `parser comparison
+        <https://www.crummy.com/software/BeautifulSoup/bs4/doc/#installing-a-parser>`__
+        and `differences between parsers
+        <https://www.crummy.com/software/BeautifulSoup/bs4/doc/#differences-between-parsers>`__
+        for help choosing a parser.
+        If overridden, it is highly recommended to `specify a parser
+        <https://www.crummy.com/software/BeautifulSoup/bs4/doc/#specifying-the-parser-to-use>`__.
+        Otherwise, BeautifulSoup will issue a warning and pick one for
+        you, but the parser it chooses may be different on different
+        machines.
+    :param requests_adapters: Configuration passed to requests, to affect
+        the way HTTP requests are performed.
+    :param raise_on_404: If True, raise :class:`LinkNotFoundError`
+        when visiting a page triggers a 404 Not Found error.
+    :param user_agent: Set the user agent header to this value.
+
+    """
+    def __init__(
+        self,
+        session: requests.Session | None = None,
+        soup_config=(('features', 'lxml'),),
+        requests_adapters=None,
+        raise_on_404=False,
+        user_agent=None,
+    ):
+        self.raise_on_404 = raise_on_404
+        self.session = session or requests.Session()
+
+        self._finalize = weakref.finalize(self.session, self.close)
+
+        self.set_user_agent(user_agent)
+
+        if requests_adapters is not None:
+            for adaptee, adapter in requests_adapters.items():
+                self.session.mount(adaptee, adapter)
+
+        self.soup_config = dict(soup_config or ())
+
+    # Regex identifying html-like response content. Allow for optional BOM
+    # (UTF-8, UTF-16 little endian, or UTF-16 big endian) prefix.
+    _HTML_MARKER_RE = re.compile(
+        rb'\s*(?:\xef\xbb\xbf|\xff\xfe|\xfe\xff)?\s*(?:<html|<!doctype)',
+        re.IGNORECASE
+    )
+
+    @staticmethod
+    def __looks_like_html(response: requests.Response) -> bool:
+        """Guesses entity type when Content-Type header is missing.
+        Since Content-Type is not strictly required, some servers leave it out.
+        """
+        # Match on the raw leading bytes: decoding response.text means
+        # decoding (and charset-sniffing) the whole body, which is very
+        # slow for large binary responses such as images or PDFs.
+        prefix = response.content[:200]
+        return bool(
+            Browser._HTML_MARKER_RE.match(prefix)
+            # UTF-16/UTF-32 encoded markup, whose ASCII characters are
+            # interleaved with NUL bytes.
+            or Browser._HTML_MARKER_RE.match(prefix.replace(b'\x00', b''))
+        )
+
+    @staticmethod
+    def add_soup(response: requests.Response, soup_config) -> ResponseWithSoup:
+        """Attaches a soup object to a requests response."""
+        response.__class__ = ResponseWithSoup
+        response = cast(ResponseWithSoup, response)
+        if ("text/html" in response.headers.get("Content-Type", "") or
+                Browser.__looks_like_html(response)):
+            # Note: By default (no charset provided in HTTP headers), requests
+            # returns 'ISO-8859-1' which is the default for HTML4, even if HTML
+            # code specifies a different encoding. In this case, we want to
+            # resort to bs4 sniffing, hence the special handling here.
+            http_encoding = (
+                response.encoding
+                if 'charset' in response.headers.get("Content-Type", "")
+                else None
+            )
+            html_encoding = bs4.dammit.EncodingDetector.find_declared_encoding(
+                response.content,
+                is_html=True
+            )
+            # See https://www.w3.org/International/questions/qa-html-encoding-declarations.en#httphead  # noqa: E501
+            # > The HTTP header has a higher precedence than the in-document
+            # > meta declarations.
+            encoding = http_encoding if http_encoding else html_encoding
+            response.soup = bs4.BeautifulSoup(
+                response.content,
+                from_encoding=encoding,
+                **soup_config
+            )
+        else:
+            response.soup = None
+        return response
+
+    def set_cookiejar(self, cookiejar):
+        """Replaces the current cookiejar in the requests session. Since the
+        session handles cookies automatically without calling this function,
+        only use this when default cookie handling is insufficient.
+
+        :param cookiejar: Any `http.cookiejar.CookieJar
+          <https://docs.python.org/3/library/http.cookiejar.html#http.cookiejar.CookieJar>`__
+          compatible object.
+        """
+        self.session.cookies = cookiejar
+
+    def get_cookiejar(self):
+        """Gets the cookiejar from the requests session."""
+        return self.session.cookies
+
+    def set_user_agent(self, user_agent):
+        """Replaces the current user agent in the requests session headers."""
+        # set a default user_agent if not specified
+        if user_agent is None:
+            requests_ua = requests.utils.default_user_agent()
+            user_agent = f'{requests_ua} ({__title__}/{__version__})'
+
+        # the requests module uses a case-insensitive dict for session headers
+        self.session.headers['User-agent'] = user_agent
+
+    def request(self, *args, **kwargs) -> ResponseWithSoup:
+        """Straightforward wrapper around `requests.Session.request
+        <http://docs.python-requests.org/en/master/api/#requests.Session.request>`__.
+
+        :return: `requests.Response
+            <http://docs.python-requests.org/en/master/api/#requests.Response>`__
+            object with a *soup*-attribute added by :func:`add_soup`.
+
+        This is a low-level function that should not be called for
+        basic usage (use :func:`get` or :func:`post` instead). Use it if you
+        need an HTTP verb that MechanicalSoup doesn't manage (e.g. MKCOL) for
+        example.
+        """
+        response = self.session.request(*args, **kwargs)
+        return Browser.add_soup(response, self.soup_config)
+
+    def get(self, *args, **kwargs) -> ResponseWithSoup:
+        """Straightforward wrapper around `requests.Session.get
+        <http://docs.python-requests.org/en/master/api/#requests.Session.get>`__.
+
+        :return: `requests.Response
+            <http://docs.python-requests.org/en/master/api/#requests.Response>`__
+            object with a *soup*-attribute added by :func:`add_soup`.
+        """
+        response = self.session.get(*args, **kwargs)
+        if self.raise_on_404 and response.status_code == 404:
+            raise LinkNotFoundError()
+        return Browser.add_soup(response, self.soup_config)
+
+    def post(self, *args, **kwargs) -> ResponseWithSoup:
+        """Straightforward wrapper around `requests.Session.post
+        <http://docs.python-requests.org/en/master/api/#requests.Session.post>`__.
+
+        :return: `requests.Response
+            <http://docs.python-requests.org/en/master/api/#requests.Response>`__
+            object with a *soup*-attribute added by :func:`add_soup`.
+        """
+        response = self.session.post(*args, **kwargs)
+        return Browser.add_soup(response, self.soup_config)
+
+    def put(self, *args, **kwargs) -> ResponseWithSoup:
+        """Straightforward wrapper around `requests.Session.put
+        <http://docs.python-requests.org/en/master/api/#requests.Session.put>`__.
+
+        :return: `requests.Response
+            <http://docs.python-requests.org/en/master/api/#requests.Response>`__
+            object with a *soup*-attribute added by :func:`add_soup`.
+        """
+        response = self.session.put(*args, **kwargs)
+        return Browser.add_soup(response, self.soup_config)
+
+    @staticmethod
+    def _get_request_kwargs(method, url, **kwargs):
+        """This method exists to raise a TypeError when a method or url is
+        specified in the kwargs.
+        """
+        request_kwargs = {"method": method, "url": url}
+        request_kwargs.update(kwargs)
+        return request_kwargs
+
+    @classmethod
+    def get_request_kwargs(cls, form, url=None, submit=None, **kwargs):
+        """Extract input data from the form."""
+        method = str(form.get("method", "get"))
+        action = form.get("action")
+
+        # If the form has a submit button, use its form action
+        # https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/button#formaction.
+        if isinstance(submit, bs4.element.Tag) and (submit.name == "button"):
+            action = submit.get("formaction", action)
+
+        url = urllib.parse.urljoin(url, action)
+        if url is None:  # This happens when both `action` and `url` are None.
+            raise ValueError('no URL to submit to')
+
+        # read https://www.w3.org/TR/html52/sec-forms.html
+        if method.lower() == "get":
+            data = kwargs.pop("params", dict())
+        else:
+            data = kwargs.pop("data", dict())
+        files = kwargs.pop("files", dict())
+
+        # Use a list of 2-tuples to better reflect the behavior of browser QSL.
+        # Requests also retains order when encoding form data in 2-tuple lists.
+        data = [(k, v) for k, v in data.items()]
+
+        multipart = form.get("enctype", "") == "multipart/form-data"
+
+        # Process form tags in the order that they appear on the page,
+        # skipping those tags that do not have a name-attribute.
+        selector = ",".join(f"{tag}[name]" for tag in
+                            ("input", "button", "textarea", "select"))
+        submit_added = False
+        for tag in form.select(selector):
+            name = tag.get("name")  # name-attribute of tag
+
+            # Skip disabled elements, since they should not be submitted.
+            # A control is also disabled when it descends from a disabled
+            # <fieldset> (outside that fieldset's first <legend>).
+            if is_disabled(tag):
+                continue
+
+            if tag.name == "input":
+                tag_type = tag.get("type", "").lower()
+                if tag_type == "submit":
+                    # Skip submit-type inputs that were not selected
+                    if submit_added or (tag != submit):
+                        continue
+                    # Avoid duplicate submits
+                    submit_added = True
+
+                if tag_type in ("radio", "checkbox"):
+                    if "checked" not in tag.attrs:
+                        continue
+                    value = tag.get("value", "on")
+                else:
+                    # browsers use empty string for inputs with missing values
+                    value = tag.get("value", "")
+
+                # If the enctype is not multipart, the filename is put in
+                # the form as a text input and the file is not sent.
+                if is_multipart_file_upload(form, tag):
+                    if isinstance(value, io.IOBase):
+                        content = value
+                        filename = os.path.basename(getattr(value, "name", ""))
+                    else:
+                        content = ""
+                        filename = os.path.basename(value)
+                    # If content is the empty string, we still pass it
+                    # for consistency with browsers (see
+                    # https://github.com/MechanicalSoup/MechanicalSoup/issues/250).
+                    files[name] = (filename, content)
+                else:
+                    if isinstance(value, io.IOBase):
+                        value = os.path.basename(getattr(value, "name", ""))
+                    data.append((name, value))
+
+            elif tag.name == "button":
+                # Buttons are only included if they are the selected submit
+                if submit_added or (tag != submit):
+                    continue
+                submit_added = True
+                data.append((name, tag.get("value", "")))
+
+            elif tag.name == "textarea":
+                data.append((name, tag.text))
+
+            elif tag.name == "select":
+                # If the value attribute is not specified, the content will
+                # be passed as a value instead.
+                options = tag.select("option")
+                selected_values = [i.get("value", i.text) for i in options
+                                   if "selected" in i.attrs]
+                if "multiple" in tag.attrs:
+                    for value in selected_values:
+                        data.append((name, value))
+                elif selected_values:
+                    # A standard select element only allows one option to be
+                    # selected, but browsers pick last if somehow multiple.
+                    data.append((name, selected_values[-1]))
+                elif options:
+                    # Selects the first option if none are selected
+                    first_value = options[0].get("value", options[0].text)
+                    data.append((name, first_value))
+
+        if method.lower() == "get":
+            kwargs["params"] = data
+        else:
+            kwargs["data"] = data
+
+        # The following part of the function is here to respect the
+        # enctype specified by the form, i.e. force sending multipart
+        # content. Since Requests doesn't have yet a feature to choose
+        # enctype, we have to use tricks to make it behave as we want
+        # This code will be updated if Requests implements it.
+        if multipart and not files:
+            # Requests will switch to "multipart/form-data" only if
+            # files pass the `if files:` test, so in this case we use
+            # a modified dict that passes the if test even if empty.
+            class DictThatReturnsTrue(dict):
+                def __bool__(self):
+                    return True
+                __nonzero__ = __bool__
+
+            files = DictThatReturnsTrue()
+
+        return cls._get_request_kwargs(method, url, files=files, **kwargs)
+
+    def _request(
+        self,
+        form,
+        url=None,
+        submit=None,
+        **kwargs,
+    ) -> requests.Response:
+        """Extract input data from the form to pass to a Requests session."""
+        request_kwargs = self.get_request_kwargs(form, url, submit, **kwargs)
+        return self.session.request(**request_kwargs)
+
+    def submit(
+        self,
+        form,
+        url=None,
+        btnName=None,
+        **kwargs,
+    ) -> ResponseWithSoup:
+        """Prepares and sends a form request.
+
+        NOTE: To submit a form with a :class:`StatefulBrowser` instance, it is
+        recommended to use :func:`StatefulBrowser.submit_selected` instead of
+        this method so that the browser state is correctly updated.
+
+        :param form: The filled-out form.
+        :param url: URL of the page the form is on. If the form action is a
+            relative path, then this must be specified.
+        :param btnName: Passed to :func:`Form.choose_submit` to choose the
+            element of the form to use for submission. If not ``None``, will
+            override any existing chosen submit in the form.
+        :param \\*\\*kwargs: Arguments forwarded to `requests.Session.request
+            <http://docs.python-requests.org/en/master/api/#requests.Session.request>`__.
+            If `files`, `params` (with GET), or `data` (with POST) are
+            specified, they will be appended to by the contents of `form`.
+
+        :return: `requests.Response
+            <http://docs.python-requests.org/en/master/api/#requests.Response>`__
+            object with a *soup*-attribute added by :func:`add_soup`.
+        """
+        if not isinstance(form, Form):
+            form = Form(form)
+        submit = form.submit_chosen
+        if (submit is None) or (btnName is not None):
+            submit = form.choose_submit(btnName)
+
+        response = self._request(form.form, url, submit, **kwargs)
+        return Browser.add_soup(response, self.soup_config)
+
+    def launch_browser(self, soup):
+        """Launch a browser to display a page, for debugging purposes.
+
+        :param: soup: Page contents to display, supplied as a bs4 soup object.
+        """
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.html') as file:
+            file.write(soup.encode())
+        webbrowser.open('file://' + file.name)
+
+    def close(self):
+        """Close the current session, if still open."""
+        if self.session is not None:
+            self.session.cookies.clear()
+            self.session.close()
+            self.session = None
+
+    def __del__(self):
+        self._finalize()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
