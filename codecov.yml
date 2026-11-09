@@ -1,0 +1,9 @@
+comment:
+  layout: "header, diff, tree"
+
+coverage:
+  status:
+    patch: false
+    project:
+      default:
+        target: 100%

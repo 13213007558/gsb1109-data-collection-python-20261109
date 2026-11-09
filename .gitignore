@@ -1,0 +1,28 @@
+# compiled files
+__pycache__/
+*.py[cod]
+
+# distribution / packaging
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+
+# environments
+*venv*/
+
+# test
+.tox/
+
+.idea/
+
+# coverage data
+.coverage
+.coverage.*
+coverage.*
+
+# test reports
+testenv.junit.xml
+
+.venv/

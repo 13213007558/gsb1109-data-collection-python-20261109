@@ -1,0 +1,6 @@
+{
+  "python": "3.12.13",
+  "original_repo_url": "https://github.com/scrapy/protego",
+  "upstream_sha": "d311dc9154767341aaf7661402cda3ddef9c2225",
+  "test_scope": "full tests directory, excluding optional comparison benchmarks"
+}
