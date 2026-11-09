@@ -1,0 +1,6 @@
+{
+  "python": "3.12.13",
+  "original_repo_url": "https://github.com/GateNLP/ultimate-sitemap-parser",
+  "upstream_sha": "6ab7704f53ad06fc9bd9742ef9c91848b8f9d7f5",
+  "test_scope": "offline parser/tree/CLI/helper tests; network-client and live integration excluded"
+}
