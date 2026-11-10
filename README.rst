@@ -70,6 +70,30 @@ Usage
    >>> rp.preferred_host
    'http://example.co.in'
 
+To find out *why* a URL is allowed or disallowed, use ``explain()``, which
+returns a JSON-serializable dict with the verdict (always matching
+``can_fetch()``), the user agent groups that took part in the selection,
+and the deciding rule with its line number and source text in the
+robots.txt:
+
+.. code-block:: pycon
+
+   >>> rp.explain("http://example.com/account/contact", "mybot")
+   {'url': 'http://example.com/account/contact',
+    'user_agent': 'mybot',
+    'normalized_path': '/account/contact',
+    'allowed': False,
+    'reason': 'disallow',
+    'selected_user_agent': '*',
+    'user_agent_groups': [{'user_agent': '*', 'score': 1, 'selected': True,
+                           'lines': [2]}],
+    'winning_rule': {'field': 'disallow',
+                     'pattern': '/account/contact$',
+                     'normalized_pattern': '/account/contact$',
+                     'line': 6,
+                     'source': 'Disallow: /account/contact$'},
+    'tied_rules': []}
+
 
 Using Protego with Requests_:
 

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Self
 from urllib.parse import urlparse
 
 from ._ruleset import RequestRate, VisitTime, _RuleSet
+from ._utils import _quote_path
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -115,6 +116,12 @@ class Protego:
         # URL patterns by directive value, shared across rule sets.
         self._url_patterns: dict[str, _URLPattern] = {}
 
+        # Raw text of the lines that produced an Allow or Disallow rule,
+        # kept once per line and referenced from rules by line number, so
+        # that explain() can point back at the source without every rule
+        # carrying its own copy of the string.
+        self._rule_sources: dict[int, str] = {}
+
         self._total_line_seen = 0
         self._total_directive_seen = 0
 
@@ -141,6 +148,7 @@ class Protego:
 
         for line in lines:
             self._total_line_seen += 1
+            raw_line = line
 
             # Remove the comment portion of the line
             hash_pos = line.find("#")
@@ -211,14 +219,17 @@ class Protego:
                         rule_set.user_agent = ua
                         self._user_agents[ua] = rule_set
                         current_rule_sets.append(rule_set)
+                    rule_set.ua_lines.append(self._total_line_seen)
 
             elif field in _ALLOW_DIRECTIVE:
+                self._rule_sources[self._total_line_seen] = raw_line
                 for rule_set in current_rule_sets:
-                    rule_set.allow(value)
+                    rule_set.allow(value, line=self._total_line_seen)
 
             elif field in _DISALLOW_DIRECTIVE:
+                self._rule_sources[self._total_line_seen] = raw_line
                 for rule_set in current_rule_sets:
-                    rule_set.disallow(value)
+                    rule_set.disallow(value, line=self._total_line_seen)
 
             elif field in _SITEMAP_DIRECTIVE:
                 self._sitemap_list.append(value)
@@ -267,6 +278,72 @@ class Protego:
         if not matched_rule_set:
             return True
         return matched_rule_set.can_fetch(url)
+
+    def _rule_explanation(self, rule_set: _RuleSet, index: int) -> dict:
+        rule = rule_set._rules[index]
+        line = rule.line
+        return {
+            "field": rule.field,
+            "pattern": rule.pattern,
+            "normalized_pattern": rule.value._pattern,
+            "line": line,
+            "source": self._rule_sources.get(line) if line is not None else None,
+        }
+
+    def explain(self, url: str, user_agent: str) -> dict:
+        """Return a JSON-serializable explanation of the can_fetch decision
+        for *url* and *user_agent*.
+
+        The "allowed" flag always matches can_fetch for the same arguments.
+        "reason" is one of "robots_txt" (robots.txt itself is always
+        allowed), "no_matching_group" (no user agent group applied),
+        "no_matching_rule" (a group applied but none of its rules matched
+        the path), "allow" or "disallow" (a rule decided, and its kind is
+        the reason).
+        """
+        explanation: dict = {
+            "url": url,
+            "user_agent": user_agent,
+            "normalized_path": _quote_path(url),
+            "allowed": True,
+            "reason": "no_matching_group",
+            "selected_user_agent": None,
+            "user_agent_groups": [],
+            "winning_rule": None,
+            "tied_rules": [],
+        }
+        if "/robots.txt" in url and urlparse(url).path == "/robots.txt":
+            explanation["reason"] = "robots_txt"
+            return explanation
+
+        matched_rule_set = self._get_matching_rule_set(user_agent)
+        for ua, rule_set in self._user_agents.items():
+            explanation["user_agent_groups"].append(
+                {
+                    "user_agent": ua,
+                    "score": rule_set.applies_to(user_agent),
+                    "selected": rule_set is matched_rule_set,
+                    "lines": list(rule_set.ua_lines),
+                }
+            )
+        if not matched_rule_set:
+            return explanation
+
+        explanation["selected_user_agent"] = matched_rule_set.user_agent
+        match = matched_rule_set.matching_rules(url)
+        if match is None:
+            explanation["reason"] = "no_matching_rule"
+            return explanation
+
+        winner, tied = match
+        winning_rule = matched_rule_set._rules[winner]
+        explanation["allowed"] = winning_rule.field == "allow"
+        explanation["reason"] = winning_rule.field
+        explanation["winning_rule"] = self._rule_explanation(matched_rule_set, winner)
+        explanation["tied_rules"] = [
+            self._rule_explanation(matched_rule_set, index) for index in tied
+        ]
+        return explanation
 
     def crawl_delay(self, user_agent: str) -> float | None:
         """Return the crawl delay specified for the user agent as a float.

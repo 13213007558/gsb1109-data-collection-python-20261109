@@ -4,7 +4,7 @@ import logging
 import math
 from typing import TYPE_CHECKING, NamedTuple
 
-from ._urlpattern import _PREFIX, _can_fetch, _FlatRule, _URLPattern
+from ._urlpattern import _PREFIX, _can_fetch, _FlatRule, _matches, _URLPattern
 from ._utils import _hexescape, _parse_time_period, _quote_path, _quote_pattern
 
 if TYPE_CHECKING:
@@ -31,6 +31,11 @@ class VisitTime(NamedTuple):
 class _Rule(NamedTuple):
     field: str
     value: _URLPattern
+    # Provenance, filled in at parse time: the 1-based line of the
+    # robots.txt the rule comes from and the directive value as written.
+    # Both are None for rules created outside the parser.
+    line: int | None = None
+    pattern: str | None = None
 
 
 class _RuleSet:
@@ -46,6 +51,9 @@ class _RuleSet:
         self._req_rate: RequestRate | None = None
         self._visit_time: VisitTime | None = None
         self._parser_instance: Protego = parser_instance
+        # Lines of the "User-agent" directives this rule set was declared
+        # by; more than one when same-named groups are merged.
+        self.ua_lines: list[int] = []
 
     def applies_to(self, robotname: str) -> int:
         """Return matching score."""
@@ -77,12 +85,14 @@ class _RuleSet:
             cache[pattern] = _URLPattern(_quote_pattern(pattern))
         return cache[pattern]
 
-    def allow(self, pattern: str) -> None:
+    def allow(self, pattern: str, line: int | None = None) -> None:
         if "$" in pattern:
-            self.allow(pattern.replace("$", _hexescape("$")))
+            self.allow(pattern.replace("$", _hexescape("$")), line=line)
 
         url_pattern = self._url_pattern(pattern)
-        self._rules.append(_Rule(field="allow", value=url_pattern))
+        self._rules.append(
+            _Rule(field="allow", value=url_pattern, line=line, pattern=pattern)
+        )
 
         # If index.html is allowed, we interpret this as / being allowed too.
         page = "index.html"
@@ -91,15 +101,22 @@ class _RuleSet:
             # Add the rule directly; going through allow() would treat the
             # "$" anchor as a literal dollar sign too.
             self._rules.append(
-                _Rule(field="allow", value=_URLPattern(quoted.removesuffix(page) + "$"))
+                _Rule(
+                    field="allow",
+                    value=_URLPattern(quoted.removesuffix(page) + "$"),
+                    line=line,
+                    pattern=pattern,
+                )
             )
 
-    def disallow(self, pattern: str) -> None:
+    def disallow(self, pattern: str, line: int | None = None) -> None:
         if "$" in pattern:
-            self.disallow(pattern.replace("$", _hexescape("$")))
+            self.disallow(pattern.replace("$", _hexescape("$")), line=line)
 
         url_pattern = self._url_pattern(pattern)
-        self._rules.append(_Rule(field="disallow", value=url_pattern))
+        self._rules.append(
+            _Rule(field="disallow", value=url_pattern, line=line, pattern=pattern)
+        )
 
     def finalize_rules(self) -> None:
         self._rules.sort(
@@ -140,6 +157,38 @@ class _RuleSet:
             prefixes = self._build_index()
         rules = self._flat_rules if url.startswith(prefixes) else self._special_rules
         return _can_fetch(rules, url)
+
+    def matching_rules(self, url: str) -> tuple[int, list[int]] | None:
+        """Return the index of the rule that decides *url* and the indices
+        of the other rules that tie with it (same priority, also matching),
+        or None when no rule matches.
+
+        Uses the same per-rule predicate as can_fetch, so the deciding rule
+        reported here is always the one can_fetch applies. Ties happen with
+        duplicate rules and with same-length Allow/Disallow pairs, where the
+        Allow sorts first and wins.
+        """
+        url = _quote_path(url)
+        if self._plain_prefixes is None:
+            self._build_index()
+        flat_rules = self._flat_rules
+        winner = None
+        for index, (kind, data, _) in enumerate(flat_rules):
+            if _matches(kind, data, url):
+                winner = index
+                break
+        if winner is None:
+            return None
+        # Rules are sorted by descending priority, so ties are contiguous.
+        priority = self._rules[winner].value.priority
+        tied = []
+        for index in range(winner + 1, len(flat_rules)):
+            if self._rules[index].value.priority != priority:
+                break
+            kind, data, _ = flat_rules[index]
+            if _matches(kind, data, url):
+                tied.append(index)
+        return winner, tied
 
     @property
     def crawl_delay(self) -> float | None:

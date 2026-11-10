@@ -49,35 +49,35 @@ class _URLPattern:
         return pattern.split("*"), ends_with_dollar
 
 
+def _matches(kind: int, data: Any, url: str) -> bool:
+    """Return whether a single flattened rule matches *url*."""
+    if kind == _PREFIX:
+        return url.startswith(data)
+    if kind == _EXACT:
+        return url == data
+    first, first_length, middle, last, last_length, anchored = data
+    if not url.startswith(first):
+        return False
+    pos = first_length
+    for part, part_length in middle:
+        index = url.find(part, pos)
+        if index == -1:
+            return False
+        pos = index + part_length
+    if anchored:
+        end = len(url) - last_length
+        if end < pos or url[end:] != last:
+            return False
+    elif last and url.find(last, pos) == -1:
+        return False
+    return True
+
+
 def _can_fetch(rules: list[_FlatRule], url: str) -> bool:
     """Return whether *url* may be fetched according to *rules*, the first
     matching rule deciding.
     """
     for kind, data, is_disallow in rules:
-        if kind == _PREFIX:
-            if not url.startswith(data):
-                continue
-        elif kind == _EXACT:
-            if url != data:
-                continue
-        else:
-            first, first_length, middle, last, last_length, anchored = data
-            if not url.startswith(first):
-                continue
-            pos = first_length
-            for part, part_length in middle:
-                index = url.find(part, pos)
-                if index == -1:
-                    pos = -1
-                    break
-                pos = index + part_length
-            if pos == -1:
-                continue
-            if anchored:
-                end = len(url) - last_length
-                if end < pos or url[end:] != last:
-                    continue
-            elif last and url.find(last, pos) == -1:
-                continue
-        return not is_disallow
+        if _matches(kind, data, url):
+            return not is_disallow
     return True
