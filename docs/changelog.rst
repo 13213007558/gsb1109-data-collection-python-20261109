@@ -1,6 +1,13 @@
 Changelog
 =========
 
+Unreleased
+----------
+
+**New Features**
+
+* Added the offline ``usp check-alternates`` command, which reads already-downloaded sitemap files and verifies multilingual ``rel="alternate"`` relationships (self-references, reciprocal links, language-group consistency and unverifiable external targets) without fetching page bodies. Results are emitted as a deterministic JSON report with distinct exit codes for pass, issues found and input parsing failures
+
 v1.8.1 (2026-06-16)
 -------------------
 

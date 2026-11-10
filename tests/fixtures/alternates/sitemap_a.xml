@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+    <!-- Group 1: clean en/fr cluster; every member lists the full label -> URL table -->
+    <url>
+        <loc>https://example.com/about</loc>
+        <xhtml:link rel="alternate" hreflang="x-default" href="https://example.com/about"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://example.com/en/about"/>
+        <xhtml:link rel="alternate" hreflang="fr" href="https://example.com/fr/about"/>
+    </url>
+    <url>
+        <loc>https://example.com/en/about</loc>
+        <xhtml:link rel="alternate" hreflang="x-default" href="https://example.com/about"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://example.com/en/about"/>
+        <xhtml:link rel="alternate" hreflang="fr" href="https://example.com/fr/about"/>
+    </url>
+    <!-- Group 2, en half (this whole url block is duplicated in the second file) -->
+    <url>
+        <loc>https://example.com/en/contact</loc>
+        <xhtml:link rel="alternate" hreflang="en" href="https://example.com/en/contact"/>
+        <xhtml:link rel="alternate" hreflang="de" href="https://example.com/de/contact"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://external.example.org/es/contact"/>
+    </url>
+</urlset>
+

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+    <!-- Group 1, remaining member: identical label -> URL table, split across files -->
+    <url>
+        <loc>https://example.com/fr/about</loc>
+        <xhtml:link rel="alternate" hreflang="x-default" href="https://example.com/about"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://example.com/en/about"/>
+        <xhtml:link rel="alternate" hreflang="fr" href="https://example.com/fr/about"/>
+    </url>
+    <!-- Group 2, de half: deliberately no en -> /en/contact back-link -->
+    <url>
+        <loc>https://example.com/de/contact</loc>
+        <xhtml:link rel="alternate" hreflang="de" href="https://example.com/de/contact"/>
+        <xhtml:link rel="alternate" hreflang="de" href="https://example.com/de-ch/contact"/>
+    </url>
+    <url>
+        <loc>https://example.com/de-ch/contact</loc>
+        <xhtml:link rel="alternate" hreflang="de" href="https://example.com/de-ch/contact"/>
+    </url>
+    <!-- Exact duplicate of the en/contact <url> block to prove declaration de-duplication -->
+    <url>
+        <loc>https://example.com/en/contact</loc>
+        <xhtml:link rel="alternate" hreflang="EN" href="https://example.com/en/contact"/>
+        <xhtml:link rel="alternate" hreflang="de" href="https://example.com/de/contact"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://external.example.org/es/contact"/>
+    </url>
+</urlset>

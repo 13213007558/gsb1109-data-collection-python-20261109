@@ -1,6 +1,7 @@
 from argparse import ArgumentParser
 
 from usp import __version__
+from usp.cli import _alternates as check_cmd
 from usp.cli import _ls as ls_cmd
 
 
@@ -12,6 +13,7 @@ def parse_args(arg_list: list[str] | None):
 
     subparsers = parser.add_subparsers(required=False, title="commands", metavar="")
     ls_cmd.register(subparsers)
+    check_cmd.register(subparsers)
 
     args = parser.parse_args(arg_list)
     return args, parser
