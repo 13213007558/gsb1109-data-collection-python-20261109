@@ -3,12 +3,14 @@ import os
 import sys
 import tempfile
 from unittest import mock
+from urllib.parse import parse_qsl, urlparse
 
 import pytest
 import setpath  # noqa:F401, must come before 'import mechanicalsoup'
 from bs4 import BeautifulSoup
+import requests
 from requests.cookies import RequestsCookieJar
-from utils import mock_get, prepare_mock_browser
+from utils import cross_owned_forms, mock_get, prepare_mock_browser
 
 import mechanicalsoup
 
@@ -114,6 +116,149 @@ def test_get_request_kwargs_many_submit_elements_have_formaction_attribute():
         form, "https://example.com", submit
     )
     assert request_kwargs["url"] == "https://example.com/submit2"
+
+
+def test_get_request_kwargs_cross_owned_controls_ordered_get():
+    """Only controls owned by the form are submitted, in document order."""
+    soup = BeautifulSoup(cross_owned_forms, "lxml")
+    form = soup.find("form", id="report")
+    browser = mechanicalsoup.Browser()
+    search = soup.find("button", {"name": "search"})
+    request_kwargs = browser.get_request_kwargs(
+        form, "https://form.test/page/", submit=search)
+
+    assert request_kwargs["method"] == "get"
+    assert request_kwargs["url"] == "https://form.test/report"
+    assert request_kwargs["params"] == [
+        ("page", "1"),
+        ("legend_field", "keep"),
+        ("scope", "all"),
+        ("filter", "a"),
+        ("filter", "b"),
+        ("note", "hello"),
+        ("search", "go"),
+    ]
+    names = [name for name, _ in request_kwargs["params"]]
+    assert "foreign_inline" not in names
+    assert "dangling" not in names
+    assert "disabled_field" not in names
+    # The unselected submit button is not part of the payload.
+    assert "export" not in names
+
+
+def test_get_request_kwargs_external_button_overrides():
+    """An external button's formaction/formmethod/formenctype win."""
+    soup = BeautifulSoup(cross_owned_forms, "lxml")
+    form = soup.find("form", id="report")
+    export = form.find_next("button", {"name": "export"})
+    request_kwargs = mechanicalsoup.Browser.get_request_kwargs(
+        form, "https://form.test/page/", submit=export)
+
+    assert request_kwargs["method"] == "post"
+    assert request_kwargs["url"] == "https://form.test/export"
+    assert request_kwargs["files"]
+    names = [name for name, _ in request_kwargs["data"]]
+    assert names == [
+        "page", "legend_field", "scope", "filter", "filter",
+        "note", "export"]
+    assert "search" not in names
+
+
+def test_get_request_kwargs_input_submit_form_overrides():
+    """form* overrides also apply to external submit-type inputs."""
+    form_html = """
+        <form id="f" method="get" action="https://example.com/default">
+            <input name="field" value="v" />
+        </form>
+        <input form="f" type="submit" name="go" value="1"
+               formaction="https://example.com/override"
+               formmethod="post" formenctype="multipart/form-data" />
+    """
+    soup = BeautifulSoup(form_html, "lxml")
+    form = soup.form
+    submit = soup.find("input", {"name": "go"})
+    request_kwargs = mechanicalsoup.Browser.get_request_kwargs(
+        form, "https://example.com", submit)
+    assert request_kwargs["method"] == "post"
+    assert request_kwargs["url"] == "https://example.com/override"
+    assert request_kwargs["files"]
+    assert request_kwargs["data"] == [
+        ("field", "v"), ("go", "1")]
+
+
+def test_browser_submit_cross_owned_forms():
+    """Browser.submit emits the expected URL, method and ordered fields."""
+    class CapturingSession(requests.Session):
+        def __init__(self):
+            super().__init__()
+            self.prepared = []
+
+        def send(self, request, **kwargs):
+            self.prepared.append(request)
+            response = requests.Response()
+            response.status_code = 200
+            response._content = b"ok"
+            return response
+
+    session = CapturingSession()
+    browser = mechanicalsoup.Browser(session=session)
+    page = BeautifulSoup(cross_owned_forms, "lxml")
+
+    form = mechanicalsoup.Form(page.find("form", id="report"))
+    form.choose_submit("search")
+    browser.submit(form, "https://form.test/page/")
+    request = session.prepared[-1]
+    assert request.method == "GET"
+    assert request.url == (
+        "https://form.test/report?page=1&legend_field=keep&scope=all"
+        "&filter=a&filter=b&note=hello&search=go")
+    assert parse_qsl(urlparse(request.url).query) == [
+        ("page", "1"),
+        ("legend_field", "keep"),
+        ("scope", "all"),
+        ("filter", "a"),
+        ("filter", "b"),
+        ("note", "hello"),
+        ("search", "go"),
+    ]
+
+    export = page.find("button", {"name": "export"})
+    form.choose_submit(export)
+    browser.submit(form, "https://form.test/page/")
+    request = session.prepared[-1]
+    assert request.method == "POST"
+    assert request.url == "https://form.test/export"
+    assert "multipart/form-data" in request.headers["Content-Type"]
+    assert b'name="export"' in request.body
+    assert b'name="search"' not in request.body
+
+
+def test_browser_submit_isolated_form_tag():
+    """Legacy call with an isolated form Tag uses local subtree controls."""
+    soup = BeautifulSoup(
+        '<form method="post" action="https://form.test/post">'
+        '<input name="local" value="1" />'
+        '<input form="other" name="explicit" value="2" />'
+        '</form>', "lxml")
+    isolated = BeautifulSoup(str(soup.form), "lxml").form
+    class CapturingSession(requests.Session):
+        def __init__(self):
+            super().__init__()
+            self.prepared = []
+
+        def send(self, request, **kwargs):
+            self.prepared.append(request)
+            response = requests.Response()
+            response.status_code = 200
+            response._content = b"ok"
+            return response
+
+    session = CapturingSession()
+    browser = mechanicalsoup.Browser(session=session)
+    browser.submit(isolated, "https://form.test/page/")
+    request = session.prepared[-1]
+    assert request.url == "https://form.test/post"
+    assert request.body == "local=1"
 
 
 def test__request(httpbin):

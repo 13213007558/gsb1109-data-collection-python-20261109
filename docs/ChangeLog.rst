@@ -13,6 +13,17 @@ Version 1.5 (in development)
 * Form controls inside a disabled ``<fieldset>`` are no longer submitted,
   matching browser behavior and the HTML specification. Controls inside the
   fieldset's first ``<legend>`` remain enabled.
+
+* Form ownership now follows the HTML specification throughout the whole RPA
+  chain (``Form`` setters, ``choose_submit``, ``Browser.submit`` and
+  ``StatefulBrowser.submit_selected``): an explicit ``form`` attribute takes
+  precedence over the ancestor form, a dangling reference no longer falls
+  back to the ancestor, and controls belonging to another form nested inside
+  the selected one are excluded. Controls are processed in document order,
+  keeping duplicate names, and external submit buttons can be selected. A
+  selected button's ``formaction``, ``formmethod`` and ``formenctype`` now
+  override the request (also for submit-type inputs); unselected buttons are
+  not included in the payload.
 * ``StatefulBrowser.links`` now raises an explanatory ``AttributeError`` when
   no page is loaded, instead of failing inside BeautifulSoup.
 

@@ -13,7 +13,12 @@ import requests
 
 from .__version__ import __title__, __version__
 from .form import Form
-from .utils import LinkNotFoundError, is_disabled, is_multipart_file_upload
+from .utils import (
+    FORM_CONTROL_TAGS,
+    LinkNotFoundError,
+    form_controls,
+    is_disabled,
+)
 
 
 class ResponseWithSoup(requests.Response):
@@ -219,11 +224,17 @@ class Browser:
         """Extract input data from the form."""
         method = str(form.get("method", "get"))
         action = form.get("action")
+        enctype = form.get("enctype", "")
 
-        # If the form has a submit button, use its form action
+        # A submit button's form* attributes override the form attributes
+        # for this request only. These attributes apply to both <button>
+        # and submit-type <input> elements, including ones placed outside
+        # the form through an explicit form attribute.
         # https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/button#formaction.
-        if isinstance(submit, bs4.element.Tag) and (submit.name == "button"):
+        if isinstance(submit, bs4.element.Tag):
             action = submit.get("formaction", action)
+            method = submit.get("formmethod", method)
+            enctype = submit.get("formenctype", enctype)
 
         url = urllib.parse.urljoin(url, action)
         if url is None:  # This happens when both `action` and `url` are None.
@@ -240,15 +251,17 @@ class Browser:
         # Requests also retains order when encoding form data in 2-tuple lists.
         data = [(k, v) for k, v in data.items()]
 
-        multipart = form.get("enctype", "") == "multipart/form-data"
+        multipart = enctype == "multipart/form-data"
 
         # Process form tags in the order that they appear on the page,
         # skipping those tags that do not have a name-attribute.
-        selector = ",".join(f"{tag}[name]" for tag in
-                            ("input", "button", "textarea", "select"))
         submit_added = False
-        for tag in form.select(selector):
+        for tag in form_controls(form, FORM_CONTROL_TAGS):
             name = tag.get("name")  # name-attribute of tag
+
+            # Tags without a name-attribute are never successful controls.
+            if name is None:
+                continue
 
             # Skip disabled elements, since they should not be submitted.
             # A control is also disabled when it descends from a disabled
@@ -275,7 +288,8 @@ class Browser:
 
                 # If the enctype is not multipart, the filename is put in
                 # the form as a text input and the file is not sent.
-                if is_multipart_file_upload(form, tag):
+                is_file_upload = multipart and tag_type == "file"
+                if is_file_upload:
                     if isinstance(value, io.IOBase):
                         content = value
                         filename = os.path.basename(getattr(value, "name", ""))

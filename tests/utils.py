@@ -34,6 +34,44 @@ choose_submit_form = '''
 '''
 
 
+# Two forms with criss-crossing ownership: controls nested in one form may
+# belong to the other through an explicit form attribute, and several
+# controls (including the submit buttons) live outside both forms.
+cross_owned_forms = '''
+<html>
+  <body>
+    <form id="report" method="get" action="https://form.test/report">
+      <input name="page" value="1" />
+      <input form="settings" name="foreign_inline" value="x" />
+      <fieldset disabled>
+        <legend><input name="legend_field" value="keep" /></legend>
+        <input name="disabled_field" value="skip" />
+      </fieldset>
+    </form>
+    <form id="settings" method="post"
+      action="https://form.test/settings">
+      <input name="setting" value="s" />
+      <select form="report" name="scope">
+        <option value="all" selected="selected">All</option>
+        <option value="mine">Mine</option>
+      </select>
+    </form>
+    <input form="report" name="filter" value="a" />
+    <input form="report" name="filter" value="b" />
+    <textarea form="report" name="note">hello</textarea>
+    <input form="ghost" name="dangling" value="d" />
+    <button form="report" type="submit" name="search"
+      value="go">Search</button>
+    <button form="report" type="submit" name="export" value="csv"
+      formaction="https://form.test/export" formmethod="post"
+      formenctype="multipart/form-data">Export</button>
+    <button form="settings" type="submit" name="save"
+      value="1">Save</button>
+  </body>
+</html>
+'''
+
+
 def setup_mock_browser(expected_post=None, text=choose_submit_form):
     url = 'mock://form.com'
     browser, mock = prepare_mock_browser()

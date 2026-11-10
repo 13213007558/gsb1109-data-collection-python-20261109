@@ -230,24 +230,6 @@ class StatefulBrowser(Browser):
                 "response was not parsed as a page (e.g. it was not HTML)."
             )
 
-        def find_associated_elements(form_id, page):
-            """Find all elements associated to a form
-                (i.e. an element with a form attribute -> ``form=form_id``)
-            """
-
-            # Elements which can have a form owner
-            elements_with_owner_form = ("input", "button", "fieldset",
-                                        "object", "output", "select",
-                                        "textarea")
-
-            found_elements = []
-
-            for element in elements_with_owner_form:
-                found_elements.extend(
-                    page.find_all(element, form=form_id)
-                )
-            return found_elements
-
         if isinstance(selector, bs4.element.Tag):
             if selector.name != "form":
                 raise LinkNotFoundError
@@ -264,10 +246,11 @@ class StatefulBrowser(Browser):
 
             form = found_forms[-1]
 
-        if form and form.has_attr('id'):
-            new_elements = find_associated_elements(form.get("id"), self.page)
-            form.extend(new_elements)
-
+        # Form ownership (including controls placed outside the form tag
+        # through an explicit ``form`` attribute) is resolved on demand by
+        # Form and Browser via utils.form_controls, instead of physically
+        # moving the controls into the form tag. This keeps document order
+        # and leaves controls nested in sibling forms untouched.
         self.__state.form = Form(form)
 
         return self.form

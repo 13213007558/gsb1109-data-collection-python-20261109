@@ -3,7 +3,7 @@ import sys
 import bs4
 import pytest
 import setpath  # noqa:F401, must come before 'import mechanicalsoup'
-from utils import setup_mock_browser
+from utils import cross_owned_forms, setup_mock_browser
 
 import mechanicalsoup
 
@@ -546,6 +546,95 @@ def test_option_without_value(fail, selected, expected_post):
 
         res = browser.submit_selected()
         assert res.status_code == 200 and res.text == 'Success!'
+
+
+def test_form_controls_ownership_and_order():
+    """Explicit form attributes win over ancestry, in document order."""
+    browser = mechanicalsoup.StatefulBrowser()
+    browser.open_fake_page(cross_owned_forms)
+    report = browser.select_form('#report')
+    settings = browser.select_form('#settings')
+
+    report_names = [tag.get('name') for tag in report._form_controls()]
+    assert report_names == [
+        'page', 'legend_field', 'disabled_field', 'scope', 'filter',
+        'filter',
+        'note', 'search', 'export',
+    ]
+    # The control nested in #report but owned by #settings is excluded,
+    # while the select nested in #settings but owned by #report is included.
+    assert 'foreign_inline' not in report_names
+    assert 'dangling' not in report_names  # form="ghost" does not exist
+
+    settings_names = [tag.get('name') for tag in settings._form_controls()]
+    assert settings_names == ['foreign_inline', 'setting', 'save']
+
+
+def test_form_set_reaches_external_controls_only():
+    """Form setters operate on owned controls, including external ones."""
+    browser = mechanicalsoup.StatefulBrowser()
+    browser.open_fake_page(cross_owned_forms)
+    report = browser.select_form('#report')
+
+    report.set_input({'filter': 'changed'})
+    external_filters = [
+        tag for tag in browser.page.find_all('input', {'name': 'filter'})
+    ]
+    assert [tag['value'] for tag in external_filters] == ['changed', 'b']
+
+    report.set_textarea({'note': 'updated'})
+    assert browser.page.find('textarea', {'name': 'note'}).text == 'updated'
+
+    report.set_select({'scope': 'mine'})
+    selected = browser.page.find('select', {'name': 'scope'}).find_all(
+        'option', selected=True)
+    assert [option['value'] for option in selected] == ['mine']
+
+    # The control owned by the sibling form must not be reachable here.
+    with pytest.raises(mechanicalsoup.LinkNotFoundError):
+        report.set_input({'foreign_inline': 'nope'})
+
+
+def test_choose_submit_external_button():
+    """Submit buttons placed outside the form can be selected."""
+    browser = mechanicalsoup.StatefulBrowser()
+    browser.open_fake_page(cross_owned_forms)
+    report = browser.select_form('#report')
+
+    export = report.choose_submit('export')
+    assert export.has_attr('form') and export['form'] == 'report'
+    assert report.submit_chosen is export
+
+    report.choose_submit('search')
+    assert report.submit_chosen.get('name') == 'search'
+
+    # A button owned by another form cannot be chosen here.
+    with pytest.raises(mechanicalsoup.LinkNotFoundError):
+        report.choose_submit('save')
+
+
+def test_form_controls_isolated_tag():
+    """An isolated form Tag keeps local behavior within its subtree only.
+
+    Without the surrounding document, explicit form attributes cannot be
+    resolved, so such controls are skipped; nested controls without a form
+    attribute remain locally determinable.
+    """
+    soup = bs4.BeautifulSoup(
+        '<form id="report" method="get">'
+        '<input name="local" value="1" />'
+        '<input form="other" name="explicit" value="2" />'
+        '</form>', 'lxml')
+    isolated = bs4.BeautifulSoup(str(soup.form), 'lxml').form
+    form = mechanicalsoup.Form(isolated)
+
+    names = [tag.get('name') for tag in form._form_controls()]
+    assert names == ['local']
+
+    form.set_input({'local': 'updated'})
+    assert isolated.find('input', {'name': 'local'})['value'] == 'updated'
+    with pytest.raises(mechanicalsoup.LinkNotFoundError):
+        form.set_input({'explicit': 'x'})
 
 
 if __name__ == '__main__':

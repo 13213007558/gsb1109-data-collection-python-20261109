@@ -4,13 +4,14 @@ import os
 import re
 import sys
 import tempfile
+from urllib.parse import parse_qsl, urlparse
 import webbrowser
 
 import pytest
 import setpath  # noqa:F401, must come before 'import mechanicalsoup'
 from bs4 import BeautifulSoup
-from utils import (mock_get, open_legacy_httpbin, prepare_mock_browser,
-                   setup_mock_browser)
+from utils import (cross_owned_forms, mock_get, open_legacy_httpbin,
+                   prepare_mock_browser, setup_mock_browser)
 
 import mechanicalsoup
 import requests
@@ -515,7 +516,12 @@ def test_select_form_tag_object():
 
 
 def test_select_form_associated_elements():
-    """Test associated elements outside the form tag"""
+    """Test associated elements outside the form tag.
+
+    Controls associated through an explicit ``form`` attribute stay in
+    their original document position; ownership is resolved lazily through
+    Form's control lookup instead of moving the tags into the form.
+    """
     forms = """<form id="a"><input><textarea></textarea></form><input form="a">
                <textarea form="a"/><input form="b">
                <form id="ab" action="/test.php"><input></form>
@@ -523,19 +529,79 @@ def test_select_form_associated_elements():
             """
     with mechanicalsoup.StatefulBrowser() as browser:
         browser.open_fake_page(forms)
-        elements_form_a = set([
+        owned_a = [
             "<input/>", "<textarea></textarea>",
-            '<input form="a"/>', '<textarea form="a"></textarea>'])
-        elements_form_ab = set(["<input/>", '<textarea form="ab"></textarea>'])
+            '<input form="a"/>', '<textarea form="a"></textarea>']
+        owned_ab = ["<input/>", '<textarea form="ab"></textarea>']
         form_by_str = browser.select_form("#a")
         form_by_tag = browser.select_form(browser.page.find("form", id='a'))
         form_by_css = browser.select_form("form[action$='.php']")
-        assert set([str(element) for element in form_by_str.form.find_all((
-            "input", "textarea"))]) == elements_form_a
-        assert set([str(element) for element in form_by_tag.form.find_all((
-            "input", "textarea"))]) == elements_form_a
-        assert set([str(element) for element in form_by_css.form.find_all((
-            "input", "textarea"))]) == elements_form_ab
+        assert [str(element) for element in
+                form_by_str._form_controls("input", "textarea")] == owned_a
+        assert [str(element) for element in
+                form_by_tag._form_controls("input", "textarea")] == owned_a
+        assert [str(element) for element in
+                form_by_css._form_controls("input", "textarea")] == owned_ab
+        # The page tree itself is not mutated.
+        assert len(browser.page.find("form", id="a").find_all(
+            ("input", "textarea"))) == 2
+
+
+def test_submit_selected_cross_owned_forms():
+    """Full RPA chain: external filters, external button, ordered fields."""
+
+    class CapturingSession(requests.Session):
+        def __init__(self):
+            super().__init__()
+            self.prepared = []
+
+        def send(self, request, **kwargs):
+            self.prepared.append(request)
+            response = requests.Response()
+            response.status_code = 200
+            response._content = b"<html></html>"
+            response.headers["Content-Type"] = "text/html"
+            return response
+
+    browser = mechanicalsoup.StatefulBrowser(session=CapturingSession())
+    browser.open_fake_page(cross_owned_forms, url="https://form.test/page/")
+
+    report = browser.select_form("#report")
+    # Setting an external, duplicated filter goes through Form.set_input.
+    report.set_input({"filter": "changed"})
+    report.choose_submit("search")
+    browser.submit_selected(update_state=False)
+    request = browser.session.prepared[-1]
+    assert request.method == "GET"
+    assert urlparse(request.url).path == "/report"
+    assert parse_qsl(urlparse(request.url).query, keep_blank_values=True) == [
+        ("page", "1"),
+        ("legend_field", "keep"),
+        ("scope", "all"),
+        ("filter", "changed"),
+        ("filter", "b"),
+        ("note", "hello"),
+        ("search", "go"),
+    ]
+
+    # The external export button overrides action, method and enctype.
+    report.choose_submit("export")
+    browser.submit_selected(update_state=False)
+    request = browser.session.prepared[-1]
+    assert request.method == "POST"
+    assert request.url == "https://form.test/export"
+    assert "multipart/form-data" in request.headers["Content-Type"]
+    assert b'name="export"' in request.body
+    assert b'name="search"' not in request.body
+
+    # The sibling form only carries its own controls.
+    settings = browser.select_form("#settings")
+    settings.choose_submit("save")
+    browser.submit_selected(update_state=False)
+    request = browser.session.prepared[-1]
+    assert request.method == "POST"
+    assert request.url == "https://form.test/settings"
+    assert request.body == "foreign_inline=x&setting=s&save=1"
 
 
 def test_referer_follow_link(httpbin):

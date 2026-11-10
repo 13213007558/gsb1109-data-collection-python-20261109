@@ -6,7 +6,12 @@ import warnings
 
 import bs4
 
-from .utils import LinkNotFoundError, is_multipart_file_upload
+from .utils import (
+    FORM_CONTROL_TAGS,
+    LinkNotFoundError,
+    form_controls,
+    is_multipart_file_upload,
+)
 
 
 class InvalidFormMethod(LinkNotFoundError):
@@ -73,17 +78,34 @@ class Form:
         """
 
         for (name, value) in data.items():
-            i = self.form.find("input", {"name": name})
+            i = next(
+                (control for control in self._form_controls("input")
+                 if control.get("name") == name),
+                None,
+            )
             if not i:
                 raise InvalidFormMethod("No input field named " + name)
             self._assert_valid_file_upload(i, value)
             i["value"] = value
 
+    def _form_controls(self, *names: str) -> list[bs4.element.Tag]:
+        """Return the controls owned by this form, in document order.
+
+        Honors explicit ``form`` attributes (including controls placed
+        outside the form tag) and excludes controls that belong to another
+        form even when nested inside this one. See
+        :func:`mechanicalsoup.utils.form_controls` for the isolated-Tag
+        limitations.
+        """
+        return form_controls(self.form, names or FORM_CONTROL_TAGS)
+
     def uncheck_all(self, name: str) -> None:
         """Remove the *checked*-attribute of all input elements with
         a *name*-attribute given by ``name``.
         """
-        for option in self.form.find_all("input", {"name": name}):
+        for option in self._form_controls("input"):
+            if option.get("name") != name:
+                continue
             if "checked" in option.attrs:
                 del option.attrs["checked"]
 
@@ -126,8 +148,11 @@ class Form:
         """
         for (name, value) in data.items():
             # Case-insensitive search for type=checkbox
-            selector = 'input[type="checkbox" i][name="{}"]'.format(name)
-            checkboxes = self.form.select(selector)
+            checkboxes = [
+                control for control in self._form_controls("input")
+                if control.get("name") == name
+                and control.get("type", "").lower() == "checkbox"
+            ]
             if not checkboxes:
                 raise InvalidFormMethod("No input checkbox named " + name)
 
@@ -171,8 +196,11 @@ class Form:
         """
         for (name, value) in data.items():
             # Case-insensitive search for type=radio
-            selector = 'input[type="radio" i][name="{}"]'.format(name)
-            radios = self.form.select(selector)
+            radios = [
+                control for control in self._form_controls("input")
+                if control.get("name") == name
+                and control.get("type", "").lower() == "radio"
+            ]
             if not radios:
                 raise InvalidFormMethod("No input radio named " + name)
 
@@ -198,7 +226,11 @@ class Form:
             its *string*-attribute set to ``value``.
         """
         for (name, value) in data.items():
-            t = self.form.find("textarea", {"name": name})
+            t = next(
+                (control for control in self._form_controls("textarea")
+                 if control.get("name") == name),
+                None,
+            )
             if not t:
                 raise InvalidFormMethod("No textarea named " + name)
             t.string = value
@@ -216,7 +248,11 @@ class Form:
             then ``value`` can be a list or tuple to select multiple options.
         """
         for (name, value) in data.items():
-            select = self.form.find("select", {"name": name})
+            select = next(
+                (control for control in self._form_controls("select")
+                 if control.get("name") == name),
+                None,
+            )
             if not select:
                 raise InvalidFormMethod("No select named " + name)
 
@@ -305,8 +341,8 @@ class Form:
         The arguments set the attributes of the new element.
         """
         # Remove existing input-like elements with the same name
-        for tag in ('input', 'textarea', 'select'):
-            for old in self.form.find_all(tag, {'name': name}):
+        for old in self._form_controls('input', 'textarea', 'select'):
+            if old.get('name') == name:
                 old.decompose()
         # We don't have access to the original soup object (just the
         # Tag), so we instantiate a new BeautifulSoup() to call
@@ -357,8 +393,11 @@ class Form:
         # All buttons NOT of type (button,reset) are valid submits
         # Case-insensitive search for type=submit
         inps = [
-            inp for inp in self.form.select('input[type="submit" i], button')
+            inp for inp in self._form_controls("input", "button")
             if (
+                inp.name == "button"
+                or inp.get("type", "").lower() == "submit"
+            ) and (
                 not isinstance(inp_type := inp.get("type"), str)
                 or inp_type.lower() not in ('button', 'reset')
             )
@@ -396,8 +435,7 @@ class Form:
 
         May help finding which fields need to be filled-in.
         """
-        for input in self.form.find_all(
-                ("input", "textarea", "select", "button")):
+        for input in self._form_controls():
             input_copy = copy.copy(input)
             # Text between the opening tag and the closing tag often
             # contains a lot of spaces that we don't want here.
