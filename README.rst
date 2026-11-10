@@ -89,6 +89,35 @@ Using Protego with Requests_:
 .. _Requests: https://3.python-requests.org/
 
 
+Scheduling requests
+===================
+
+\`\`Scheduler\`\` turns the parsed \`\`Crawl-delay\`\`, \`\`Request-rate\`\` and
+\`\`Visit-time\`\` directives into concrete send times without performing any
+network I/O. \`\`reserve()\`\` hands out a unique ticket for the earliest legal
+send time, taking every pending and committed ticket into account;
+\`\`commit()\`\` confirms that the send happened exactly at the ticket time (a
+late ticket expires and must be reserved again), and \`\`cancel()\`\` frees the
+capacity of a pending ticket. A single instance is safe to share between
+threads.
+
+.. code-block:: pycon
+
+   >>> from datetime import datetime, timezone
+   >>> from protego import Protego, Scheduler
+   >>> rp = Protego.parse("""
+   ... User-agent: *
+   ... Crawl-delay: 10
+   ... Visit-time: 2200-0200
+   ... """)
+   >>> scheduler = Scheduler(rp, "mybot", "https://example.com")
+   >>> now = datetime(2026, 11, 10, 21, 59, 50, tzinfo=timezone.utc)
+   >>> scheduler.reserve(now)
+   Reservation(ticket_id=1, scheduled_at=datetime.datetime(2026, 11, 10, 22, 0, tzinfo=datetime.timezone.utc))
+   >>> scheduler.reserve(now)
+   Reservation(ticket_id=2, scheduled_at=datetime.datetime(2026, 11, 10, 22, 0, 10, tzinfo=datetime.timezone.utc))
+
+
 Comparison
 ==========
 
