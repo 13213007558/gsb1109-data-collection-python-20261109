@@ -5,6 +5,13 @@ Release Notes
 Version 1.5 (in development)
 ============================
 
+* Added ``StatefulBrowser.fork()``, which creates an independent browser
+  branching off from the current state (URL, parsed page, selected form
+  with its values and chosen submit element, cookies, headers, auth and
+  other session configuration) without re-requesting the page. The fork
+  gets its own session but shares the parent's adapters and connection
+  pools; closing a fork never closes them.
+
 * When the ``Content-Type`` header is missing, HTML is now detected from the
   first bytes of the response instead of decoding the whole body, which is
   much faster for large binary responses. Uppercase markup such as ``<HTML>``

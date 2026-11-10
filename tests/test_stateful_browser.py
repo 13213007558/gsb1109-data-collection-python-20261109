@@ -1,9 +1,11 @@
 import copy
+import io
 import json
 import os
 import re
 import sys
 import tempfile
+from urllib.parse import parse_qsl
 import webbrowser
 
 import pytest
@@ -918,6 +920,249 @@ def test_submit_error():
     browser.select_form()
     with pytest.raises(UserWarning, match="To submit a form"):
         browser.submit(browser.form)
+
+
+fork_test_page = '''
+<html>
+  <body>
+    <form id="export" method="post" action="mock://form.com/post">
+      <input type="hidden" name="token" value="one-time-token" />
+      <input type="text" name="region" value="" />
+      <input type="text" name="date" value="" />
+      <input type="submit" name="by_region" value="Export by region" />
+      <input type="submit" name="by_date" value="Export by date" />
+    </form>
+  </body>
+</html>
+'''
+
+
+def test_fork_page_and_form_isolated():
+    """A fork copies the current state, then diverges independently."""
+    browser = mechanicalsoup.StatefulBrowser()
+    browser.open_fake_page(fork_test_page, url='http://example.com/query')
+    browser.select_form('#export')
+    browser['region'] = 'us-east'
+    browser.form.choose_submit('by_region')
+
+    fork = browser.fork()
+
+    # Same state, but distinct objects.
+    assert fork.url == browser.url
+    assert fork.page is not browser.page
+    assert fork.page == browser.page  # bs4 tags compare by value
+    assert fork.form.form is not browser.form.form
+    assert fork.get_current_page() is fork.page
+    assert fork.get_current_form() is fork.form
+    assert fork.get_url() == fork.url
+
+    # The chosen submit is rebound to the fork's own tree.
+    chosen = fork.form.submit_chosen
+    assert chosen is not browser.form.submit_chosen
+    assert chosen['name'] == 'by_region'
+    root = chosen
+    while root.parent is not None:
+        root = root.parent
+    assert root is fork.page
+
+    # Field changes don't cross over.
+    fork['region'] = 'eu-west'
+    region = fork.form.form.find('input', {'name': 'region'})
+    assert region['value'] == 'eu-west'
+    assert (browser.form.form.find('input', {'name': 'region'})['value']
+            == 'us-east')
+
+    # DOM changes don't cross over.
+    fork.page.body.append(fork.page.new_tag('div'))
+    assert fork.page.body.find('div') is not None
+    assert browser.page.body.find('div') is None
+
+    # Changes to the chosen submit element don't cross over.
+    chosen['value'] = 'changed'
+    assert browser.form.submit_chosen['value'] == 'Export by region'
+
+
+def test_fork_session_state():
+    """A fork inherits the session configuration on an independent session."""
+    browser = mechanicalsoup.StatefulBrowser()
+    browser.session.auth = ('user', 'pass')
+    browser.session.verify = False
+    browser.session.headers['X-Custom'] = 'parent'
+    browser.session.cookies.set('sid', 'abc')
+    browser.set_verbose(2)
+
+    fork = browser.fork()
+
+    assert fork.session is not browser.session
+    assert fork.session.auth == ('user', 'pass')
+    assert fork.session.verify is False
+    assert fork.session.headers['X-Custom'] == 'parent'
+    assert (fork.session.headers['User-agent']
+            == browser.session.headers['User-agent'])
+    assert fork.session.cookies.get('sid') == 'abc'
+    assert fork.get_verbose() == 2
+
+    # Adapters (and their connection pools) are shared, not copied.
+    for prefix, adapter in browser.session.adapters.items():
+        assert fork.session.adapters[prefix] is adapter
+
+    # Cookie and header changes don't cross over.
+    fork.session.headers['X-Custom'] = 'fork'
+    fork.session.cookies.set('sid', 'fork')
+    assert browser.session.headers['X-Custom'] == 'parent'
+    assert browser.session.cookies.get('sid') == 'abc'
+    assert fork.session.headers['X-Custom'] == 'fork'
+    assert fork.session.cookies.get('sid') == 'fork'
+
+
+def test_fork_close_does_not_affect_parent():
+    """Closing a fork must not close the shared adapters/connection pools."""
+    expected_post = [
+        ('text', 'hello'),
+        ('comment', 'parent submits'),
+        ('preview', 'Preview Page'),
+    ]
+    browser, url = setup_mock_browser(expected_post=expected_post)
+    browser.open(url)
+    browser.select_form('#choose-submit-form')
+    browser['text'] = 'hello'
+    browser['comment'] = 'parent submits'
+
+    fork = browser.fork()
+    assert fork.session.adapters['mock'] is browser.session.adapters['mock']
+
+    fork.close()
+    assert fork.session is None
+
+    # The parent browser is still fully functional.
+    res = browser.submit_selected()
+    assert res.status_code == 200 and res.text == 'Success!'
+
+
+def test_fork_file_control_with_bound_file():
+    """Forking with an open file bound to a file control fails cleanly."""
+    browser = mechanicalsoup.StatefulBrowser()
+    browser.open_fake_page(
+        '<form method="post" enctype="multipart/form-data">'
+        '<input type="file" name="attachment" />'
+        '<input type="submit" name="go" /></form>',
+        url='http://example.com')
+    browser.select_form()
+    browser['attachment'] = io.BytesIO(b'data')
+
+    with pytest.raises(ValueError, match="'attachment'"):
+        browser.fork()
+
+    # The parent browser is left unchanged.
+    assert browser.url == 'http://example.com'
+    assert isinstance(
+        browser.form.form.find('input', {'name': 'attachment'})['value'],
+        io.IOBase)
+
+
+def test_fork_no_page():
+    """Forking works even when no page was ever opened."""
+    browser = mechanicalsoup.StatefulBrowser()
+    fork = browser.fork()
+    assert fork.page is None
+    assert fork.url is None
+    with pytest.raises(AttributeError, match="No form has been selected yet."):
+        fork.form
+
+
+def test_fork_no_selected_form():
+    """Forking works when a page is opened but no form is selected."""
+    browser = mechanicalsoup.StatefulBrowser()
+    browser.open_fake_page('<p>hello</p>', url='http://example.com')
+    fork = browser.fork()
+    assert fork.url == 'http://example.com'
+    assert fork.page is not browser.page
+    assert fork.page == browser.page
+    with pytest.raises(AttributeError, match="No form has been selected yet."):
+        fork.form
+
+
+def test_fork_closed_browser():
+    browser = mechanicalsoup.StatefulBrowser()
+    browser.close()
+    with pytest.raises(ValueError, match="closed"):
+        browser.fork()
+
+
+def test_fork_branches_submit_independently():
+    """Two forks and the parent submit their own fields and cookies."""
+    browser, mock = prepare_mock_browser()
+    mock_get(mock, 'mock://form.com', fork_test_page)
+    submissions = []
+
+    def record_submission(request, context):
+        submissions.append((
+            parse_qsl(request.text, keep_blank_values=True),
+            request.headers.get('Cookie', ''),
+        ))
+        return 'ok'
+
+    mock.register_uri('POST', 'mock://form.com/post', text=record_submission)
+
+    browser.open('mock://form.com')
+    browser.select_form('#export')
+    browser.form.choose_submit('by_region')
+    browser.session.cookies.set('session', 'parent')
+
+    region_branch = browser.fork()
+    date_branch = browser.fork()
+
+    region_branch['region'] = 'eu-west'
+    region_branch.session.cookies.set('branch', 'region')
+    region_branch.submit_selected()
+
+    date_branch['date'] = '2026-11'
+    date_branch.form.choose_submit('by_date')
+    date_branch.session.cookies.set('branch', 'date')
+    date_branch.submit_selected()
+
+    region_branch.close()
+
+    # The parent still holds its original state.
+    browser.submit_selected()
+
+    assert len(submissions) == 3
+
+    region_fields, region_cookies = submissions[0]
+    assert region_fields == [
+        ('token', 'one-time-token'),
+        ('region', 'eu-west'),
+        ('date', ''),
+        ('by_region', 'Export by region'),
+    ]
+    assert 'session=parent' in region_cookies
+    assert 'branch=region' in region_cookies
+
+    date_fields, date_cookies = submissions[1]
+    assert date_fields == [
+        ('token', 'one-time-token'),
+        ('region', ''),
+        ('date', '2026-11'),
+        ('by_date', 'Export by date'),
+    ]
+    assert 'session=parent' in date_cookies
+    assert 'branch=date' in date_cookies
+    assert 'branch=region' not in date_cookies
+
+    parent_fields, parent_cookies = submissions[2]
+    assert parent_fields == [
+        ('token', 'one-time-token'),
+        ('region', ''),
+        ('date', ''),
+        ('by_region', 'Export by region'),
+    ]
+    assert 'session=parent' in parent_cookies
+    assert 'branch=' not in parent_cookies
+
+    # The page was never refetched: the one-time token state came from
+    # the in-memory copy.
+    gets = [r for r in mock.request_history if r.method == 'GET']
+    assert len(gets) == 1
 
 
 if __name__ == '__main__':

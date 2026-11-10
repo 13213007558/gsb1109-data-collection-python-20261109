@@ -1,7 +1,10 @@
+import copy
 from dataclasses import dataclass
+import io
 import re
 import sys
 import urllib.parse
+import weakref
 
 import bs4
 import requests
@@ -19,6 +22,53 @@ class _BrowserState:
     url: str | None = None
     form: Form | None = None
     request: requests.PreparedRequest | None = None
+
+
+class _SharedAdapterSession(requests.Session):
+    """A session whose mounted adapters are owned by another session.
+
+    Used by :func:`StatefulBrowser.fork`: the fork mounts the very same
+    adapter instances as its parent, so both share the adapters'
+    connection pools (e.g. urllib3 pools held by HTTPAdapter). The parent
+    session keeps ownership: closing a fork only detaches the shared
+    adapters without closing them, hence never closes the shared
+    connection pools. The pools are released when the owning (parent)
+    session is closed.
+    """
+
+    def close(self):
+        # Detach the shared adapters instead of closing them (which is
+        # what requests.Session.close would do): they belong to the
+        # parent session and must stay usable for it and its other forks.
+        self.adapters.clear()
+
+
+def _tree_path(root, node):
+    """Return the location of ``node`` in the tree rooted at ``root`` as a
+    list of child indices (outermost first), or None if ``node`` is not a
+    descendant of ``root``. Comparison is done by identity because bs4
+    Tags compare by value.
+    """
+    path = []
+    while node is not root:
+        parent = node.parent
+        if parent is None:
+            return None
+        index = next(i for i, child in enumerate(parent.contents)
+                     if child is node)
+        path.append(index)
+        node = parent
+    path.reverse()
+    return path
+
+
+def _resolve_tree_path(root, path):
+    """Return the node located at ``path`` (as built by :func:`_tree_path`)
+    in the tree rooted at ``root``."""
+    node = root
+    for index in path:
+        node = node.contents[index]
+    return node
 
 
 class StatefulBrowser(Browser):
@@ -205,6 +255,143 @@ class StatefulBrowser(Browser):
         self.__state = _BrowserState(page=resp.soup, url=resp.url,
                                      request=resp.request)
         return resp
+
+    def _fork_session(self):
+        """Build a new session for :func:`fork`, derived from this
+        browser's session.
+
+        Cookies, headers, auth and the usual session configuration are
+        carried over, but the session itself is a new object so that
+        later changes on either side stay independent. Adapters are
+        shared, not copied: see :class:`_SharedAdapterSession`.
+        """
+        source = self.session
+        session = _SharedAdapterSession()
+        # Mutable per-session state is (deep-)copied so that the fork and
+        # its parent can diverge independently.
+        session.headers = CaseInsensitiveDict(source.headers)
+        session.cookies = copy.deepcopy(source.cookies)
+        session.proxies = copy.deepcopy(source.proxies)
+        session.params = copy.deepcopy(source.params)
+        session.hooks = copy.deepcopy(source.hooks)
+        # Auth is shared by reference: auth objects (e.g. (user, password)
+        # tuples or AuthBase instances) are treated as immutable.
+        session.auth = source.auth
+        session.verify = source.verify
+        session.cert = source.cert
+        session.max_redirects = source.max_redirects
+        session.trust_env = source.trust_env
+        session.stream = source.stream
+        # Mount the same adapter instances: adapters (and the connection
+        # pools they hold) are shared with the parent session, which
+        # remains their owner. _SharedAdapterSession.close makes sure the
+        # fork never closes them.
+        session.adapters.clear()
+        for prefix, adapter in source.adapters.items():
+            session.mount(prefix, adapter)
+        return session
+
+    @staticmethod
+    def _assert_no_bound_file_controls(form):
+        """Raise if a file control of `form` has an open file bound."""
+        for tag in form.form.find_all("input"):
+            if (tag.get("type", "").lower() == "file" and
+                    isinstance(tag.get("value"), io.IOBase)):
+                raise ValueError(
+                    f"Cannot fork: file control {tag.get('name')!r} has an "
+                    "open file object bound to it, which cannot be copied "
+                    "safely. Fork before binding the file, or close and "
+                    "unbind it first."
+                )
+
+    def fork(self):
+        """Create an independent browser branching off from the current
+        state.
+
+        The returned :class:`StatefulBrowser` starts as a copy of this
+        browser's current state: same URL, same parsed page, same
+        selected form with its filled-in values, and same chosen submit
+        element (rebound to the corresponding element of the fork's own
+        copy of the page). Cookies, headers, auth and the other session
+        configuration (proxies, verify, cert, ...) are inherited as
+        well. No HTTP request is performed: the page is copied in
+        memory, so state that cannot be refetched (e.g. one-time tokens
+        in the page) is preserved.
+
+        Afterwards, the fork and its parent are fully independent:
+        modifying the DOM, form fields, cookies or headers on either
+        side does not affect the other.
+
+        The fork gets a new :class:`requests.Session` rather than a
+        deepcopy of the parent's: a session holds adapters, and adapters
+        hold live connection pools that cannot be meaningfully copied.
+        Instead, the fork mounts the *same* adapter instances as the
+        parent, so both share the underlying connection pools. The
+        parent session owns them: closing a fork only detaches the
+        shared adapters and never closes the pools, so the parent (and
+        sibling forks) keep working. Conversely, forks must not be used
+        after the parent browser is closed, since that releases the
+        shared pools.
+
+        :raise ValueError: If a file control of the currently selected
+            form has an open file object bound to it. Open streams
+            cannot be safely duplicated, so forking is refused; this
+            browser is left unchanged. Fork before binding files, or
+            close and unbind the file first.
+
+        :return: A new :class:`StatefulBrowser`.
+        """
+        if self.session is None:
+            raise ValueError("Cannot fork: this browser is closed.")
+
+        state = self.__state
+        current_form = state.form
+        if current_form is not None:
+            # Checked before anything is built so that the parent is
+            # guaranteed to be left unchanged on failure.
+            self._assert_no_bound_file_controls(current_form)
+
+        fork = type(self).__new__(type(self))
+        fork.raise_on_404 = self.raise_on_404
+        fork.soup_config = dict(self.soup_config)
+        fork.session = self._fork_session()
+        fork._finalize = weakref.finalize(fork.session, fork.close)
+        fork.__debug = self.__debug
+        fork.__verbose = self.__verbose
+
+        # Copy the page in memory (never refetch it) so that DOM changes
+        # on either side stay independent.
+        new_page = copy.copy(state.page) if state.page is not None else None
+        new_form = None
+        if current_form is not None:
+            old_form_tag = current_form.form
+            path = (_tree_path(state.page, old_form_tag)
+                    if state.page is not None else None)
+            if path is not None:
+                new_form_tag = _resolve_tree_path(new_page, path)
+            else:
+                # The form tag is not part of the page tree: copy it
+                # standalone.
+                new_form_tag = copy.copy(old_form_tag)
+            new_form = Form(new_form_tag)
+            # Rebind the chosen submit element to the corresponding node
+            # of the fork's own tree.
+            submit = current_form.submit_chosen
+            if isinstance(submit, bs4.element.Tag):
+                submit_path = _tree_path(old_form_tag, submit)
+                new_form._submit_chosen = _resolve_tree_path(
+                    new_form_tag, submit_path)
+            else:
+                new_form._submit_chosen = submit
+
+        fork.__state = _BrowserState(page=new_page, url=state.url,
+                                     form=new_form, request=state.request)
+
+        # Aliases for backwards compatibility, as in __init__.
+        fork.get_current_page = lambda: fork.page
+        fork.get_current_form = lambda: fork.__state.form
+        fork.get_url = lambda: fork.url
+        return fork
 
     def select_form(self, selector="form", nr=0):
         """Select a form in the current page.
