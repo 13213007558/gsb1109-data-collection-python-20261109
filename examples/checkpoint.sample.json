@@ -1,0 +1,184 @@
+{
+  "aliases": {},
+  "documents": {
+    "http://example.com/a.xml": {
+      "bytes": 218,
+      "children": [],
+      "kind": "PagesXMLSitemap",
+      "pages": [
+        {
+          "alternates": null,
+          "change_frequency": null,
+          "images": null,
+          "last_modified": null,
+          "news_story": null,
+          "priority": "0.5",
+          "url": "http://example.com/news/a1.html"
+        },
+        {
+          "alternates": null,
+          "change_frequency": null,
+          "images": null,
+          "last_modified": null,
+          "news_story": null,
+          "priority": "0.5",
+          "url": "http://example.com/news/a2.html"
+        }
+      ],
+      "reason": null,
+      "status": "completed",
+      "url": "http://example.com/a.xml"
+    },
+    "http://example.com/b_index.xml": {
+      "bytes": 237,
+      "children": [
+        "http://example.com/shared.xml",
+        "http://example.com/b.xml"
+      ],
+      "kind": "IndexXMLSitemap",
+      "pages": [],
+      "reason": null,
+      "status": "completed",
+      "url": "http://example.com/b_index.xml"
+    },
+    "http://example.com/c_index.xml": {
+      "bytes": 241,
+      "children": [
+        "http://example.com/shared.xml",
+        "http://example.com/gz.xml.gz"
+      ],
+      "kind": "IndexXMLSitemap",
+      "pages": [],
+      "reason": null,
+      "status": "completed",
+      "url": "http://example.com/c_index.xml"
+    },
+    "http://example.com/sitemap_index.xml": {
+      "bytes": 542,
+      "children": [
+        "http://example.com/a.xml",
+        "http://example.com/b_index.xml",
+        "http://example.com/c_index.xml",
+        "http://example.com/redirect_to_a.xml",
+        "http://example.com/loop.xml",
+        "http://example.com/flaky.xml",
+        "http://example.com/rloop.xml"
+      ],
+      "kind": "IndexXMLSitemap",
+      "pages": [],
+      "reason": null,
+      "status": "completed",
+      "url": "http://example.com/sitemap_index.xml"
+    }
+  },
+  "edges": [
+    {
+      "child": "http://example.com/a.xml",
+      "note": null,
+      "parent": "http://example.com/sitemap_index.xml"
+    },
+    {
+      "child": "http://example.com/b_index.xml",
+      "note": null,
+      "parent": "http://example.com/sitemap_index.xml"
+    },
+    {
+      "child": "http://example.com/c_index.xml",
+      "note": null,
+      "parent": "http://example.com/sitemap_index.xml"
+    },
+    {
+      "child": "http://example.com/redirect_to_a.xml",
+      "note": null,
+      "parent": "http://example.com/sitemap_index.xml"
+    },
+    {
+      "child": "http://example.com/loop.xml",
+      "note": null,
+      "parent": "http://example.com/sitemap_index.xml"
+    },
+    {
+      "child": "http://example.com/flaky.xml",
+      "note": null,
+      "parent": "http://example.com/sitemap_index.xml"
+    },
+    {
+      "child": "http://example.com/rloop.xml",
+      "note": null,
+      "parent": "http://example.com/sitemap_index.xml"
+    },
+    {
+      "child": "http://example.com/shared.xml",
+      "note": null,
+      "parent": "http://example.com/b_index.xml"
+    },
+    {
+      "child": "http://example.com/b.xml",
+      "note": null,
+      "parent": "http://example.com/b_index.xml"
+    },
+    {
+      "child": "http://example.com/shared.xml",
+      "note": null,
+      "parent": "http://example.com/c_index.xml"
+    },
+    {
+      "child": "http://example.com/gz.xml.gz",
+      "note": null,
+      "parent": "http://example.com/c_index.xml"
+    }
+  ],
+  "entry": {
+    "options": {},
+    "urls": [
+      "http://example.com/sitemap_index.xml"
+    ]
+  },
+  "format": "usp-crawl-session",
+  "frontier": [
+    {
+      "parents": [
+        "http://example.com/sitemap_index.xml"
+      ],
+      "url": "http://example.com/redirect_to_a.xml"
+    },
+    {
+      "parents": [
+        "http://example.com/sitemap_index.xml"
+      ],
+      "url": "http://example.com/loop.xml"
+    },
+    {
+      "parents": [
+        "http://example.com/sitemap_index.xml"
+      ],
+      "url": "http://example.com/flaky.xml"
+    },
+    {
+      "parents": [
+        "http://example.com/sitemap_index.xml"
+      ],
+      "url": "http://example.com/rloop.xml"
+    },
+    {
+      "parents": [
+        "http://example.com/b_index.xml",
+        "http://example.com/c_index.xml"
+      ],
+      "url": "http://example.com/shared.xml"
+    },
+    {
+      "parents": [
+        "http://example.com/b_index.xml"
+      ],
+      "url": "http://example.com/b.xml"
+    },
+    {
+      "parents": [
+        "http://example.com/c_index.xml"
+      ],
+      "url": "http://example.com/gz.xml.gz"
+    }
+  ],
+  "version": 1
+}

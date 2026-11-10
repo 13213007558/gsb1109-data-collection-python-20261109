@@ -13,6 +13,7 @@ Ultimate Sitemap Parser
     :caption: Guides
 
     guides/sitemap-tree
+    guides/crawl-session
     guides/fetch-parse
     guides/saving
     guides/performance
