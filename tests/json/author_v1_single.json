@@ -1,0 +1,12 @@
+{
+"__TEST__": "Description: JSON feed v1 single author is still supported Expect: not bozo and feed.author == 'Feed Author' and [a.name for a in entries[0].authors] == ['Item Author'] and entries[0].author_detail.href == 'https://example.org/item-author' -->",
+"version": "https://jsonfeed.org/version/1",
+"title": "Example",
+"author": { "name": "Feed Author" },
+"items": [
+{
+"id": "1",
+"author": { "name": "Item Author", "url": "https://example.org/item-author" }
+}
+]
+}

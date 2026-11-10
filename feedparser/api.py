@@ -68,6 +68,7 @@ SUPPORTED_VERSIONS = {
     "atom": "Atom (unknown version)",
     "cdf": "CDF",
     "json1": "JSON feed 1",
+    "json11": "JSON feed 1.1",
 }
 
 
@@ -361,11 +362,17 @@ def _parse_file_inplace(
     if use_json_parser:
         result["version"] = None
         feed_parser = JSONParser(baseuri, baselang, "utf-8")
+        feed_parser.resolve_relative_uris = resolve_relative_uris
+        feed_parser.sanitize_html = sanitize_html
         try:
             feed_parser.feed(stream_factory.get_file())
         except Exception as e:
             result["bozo"] = 1
             result["bozo_exception"] = e
+        else:
+            if feed_parser.bozo_exception is not None:
+                result["bozo"] = 1
+                result["bozo_exception"] = feed_parser.bozo_exception
 
     result["feed"] = feed_parser.feeddata
     result["entries"] = feed_parser.entries

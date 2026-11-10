@@ -1,0 +1,25 @@
+{
+"__TEST__": "Description: attachments keep title, size_in_bytes, and duration_in_seconds, including legitimate zero values Expect: not bozo and len(entries[0].enclosures) == 2 and entries[0].enclosures[0].href == 'https://example.org/episode.mp3' and entries[0].enclosures[0].type == 'audio/mpeg' and entries[0].enclosures[0].title == 'Episode 1' and entries[0].enclosures[0].length == 0 and entries[0].enclosures[0].duration_in_seconds == 0 and entries[0].enclosures[1].length == 12345 and entries[0].enclosures[1].duration_in_seconds == 60 -->",
+"version": "https://jsonfeed.org/version/1.1",
+"title": "Example",
+"items": [
+{
+"id": "1",
+"attachments": [
+{
+"url": "https://example.org/episode.mp3",
+"mime_type": "audio/mpeg",
+"title": "Episode 1",
+"size_in_bytes": 0,
+"duration_in_seconds": 0
+},
+{
+"url": "https://example.org/episode-2.mp3",
+"mime_type": "audio/mpeg",
+"size_in_bytes": 12345,
+"duration_in_seconds": 60
+}
+]
+}
+]
+}

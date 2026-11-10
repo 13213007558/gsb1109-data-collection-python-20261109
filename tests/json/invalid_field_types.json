@@ -1,0 +1,13 @@
+{
+"__TEST__": "Description: wrong field types set bozo instead of raising KeyError, and the item survives Expect: bozo and isinstance(bozo_exception, ValueError) and len(entries) == 1 and entries[0].guid == '1' and 'authors' not in entries[0] and 'enclosures' not in entries[0] and 'updated' not in entries[0] -->",
+"version": "https://jsonfeed.org/version/1.1",
+"title": "Example",
+"items": [
+{
+"id": "1",
+"authors": "not-a-list",
+"attachments": { "url": "https://example.org/file.mp3" },
+"date_modified": 1600000000
+}
+]
+}

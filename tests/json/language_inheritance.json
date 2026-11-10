@@ -1,0 +1,10 @@
+{
+"__TEST__": "Description: item language inherits feed language and content carries the item language Expect: not bozo and feed.language == 'en' and entries[0].language == 'en' and entries[0].content[0].language == 'en' and entries[1].language == 'fr' and entries[1].content[0].language == 'fr' -->",
+"version": "https://jsonfeed.org/version/1.1",
+"title": "Example",
+"language": "en",
+"items": [
+{ "id": "1", "content_text": "Hello" },
+{ "id": "2", "language": "fr", "content_text": "Bonjour" }
+]
+}

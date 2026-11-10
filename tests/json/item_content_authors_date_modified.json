@@ -1,0 +1,17 @@
+{
+    "__TEST__": "Description: item with content_text, content_html, two authors, and date_modified Expect: not bozo and len(entries) == 1 and isinstance(entries[0].content, list) and len(entries[0].content) == 2 and entries[0].content[0].type == 'text/plain' and entries[0].content[0].value == 'Plain text.' and entries[0].content[1].type == 'text/html' and entries[0].content[1].value == '<p>HTML text.</p>' and [a.name for a in entries[0].authors] == ['First Author', 'Second Author'] and entries[0].author == 'First Author' and entries[0].author_detail.name == 'First Author' and entries[0].updated == '2021-06-01T10:00:00Z' and entries[0].updated_parsed[:6] == (2021, 6, 1, 10, 0, 0) -->",
+    "version": "https://jsonfeed.org/version/1.1",
+    "title": "Example",
+    "items": [
+        {
+            "id": "1",
+            "content_text": "Plain text.",
+            "content_html": "<p>HTML text.</p>",
+            "authors": [
+                { "name": "First Author" },
+                { "name": "Second Author" }
+            ],
+            "date_modified": "2021-06-01T10:00:00Z"
+        }
+    ]
+}

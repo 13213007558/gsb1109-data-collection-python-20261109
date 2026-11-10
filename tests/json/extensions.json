@@ -1,0 +1,22 @@
+{
+"__TEST__": "Description: underscore extension fields are preserved at their own level Expect: not bozo and feed._feed_extension['custom'] == True and entries[0]._item_extension == 'kept' and entries[0].authors[0]._author_extension == 42 and entries[0].enclosures[0]._attachment_extension == 'yes' -->",
+"version": "https://jsonfeed.org/version/1.1",
+"title": "Example",
+"_feed_extension": { "custom": true },
+"items": [
+{
+"id": "1",
+"_item_extension": "kept",
+"authors": [
+{ "name": "Author", "_author_extension": 42 }
+],
+"attachments": [
+{
+"url": "https://example.org/file.mp3",
+"mime_type": "audio/mpeg",
+"_attachment_extension": "yes"
+}
+]
+}
+]
+}

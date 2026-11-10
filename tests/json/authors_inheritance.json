@@ -1,0 +1,17 @@
+{
+"__TEST__": "Description: item authors inherit feed authors, explicit empty authors stay empty, authors wins over author Expect: not bozo and feed.author == 'Feed Author (feed@example.org)' and feed.author_detail.email == 'feed@example.org' and [a.name for a in entries[0].authors] == ['Feed Author'] and entries[0].author == 'Feed Author (feed@example.org)' and entries[1].authors == [] and 'author' not in entries[1] and 'author_detail' not in entries[1] and [a.name for a in entries[2].authors] == ['Winning Author'] -->",
+"version": "https://jsonfeed.org/version/1.1",
+"title": "Example",
+"authors": [
+{ "name": "Feed Author", "url": "mailto:feed@example.org" }
+],
+"items": [
+{ "id": "1" },
+{ "id": "2", "authors": [] },
+{
+"id": "3",
+"author": { "name": "Legacy Author" },
+"authors": [ { "name": "Winning Author" } ]
+}
+]
+}
