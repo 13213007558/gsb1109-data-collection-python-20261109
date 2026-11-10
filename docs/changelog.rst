@@ -1,6 +1,13 @@
 Changelog
 =========
 
+Unreleased
+----------
+
+**New Features**
+
+* Added :mod:`usp.streaming`, an on-demand streaming entry point for single XML ``urlset`` documents. :func:`~usp.streaming.iter_sitemap_pages` consumes a caller-provided binary stream in small chunks and yields each :class:`~usp.objects.page.SitemapPage` as soon as its ``</url>`` tag closes, without building the full page list. Gzip input is decompressed incrementally as well, ``sitemapindex``/other root elements are rejected explicitly, and ``complete``/``close``/truncation states distinguish partial consumption from a fully parsed document. The caller's stream is never closed by USP, and external entities remain blocked.
+
 v1.8.1 (2026-06-16)
 -------------------
 

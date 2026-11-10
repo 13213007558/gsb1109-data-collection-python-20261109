@@ -9,5 +9,6 @@ Python API Reference
     usp.fetch_parse
     usp.helpers
     usp.objects
+    usp.streaming
     usp.tree
     usp.web_client

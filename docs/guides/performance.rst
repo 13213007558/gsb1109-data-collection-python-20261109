@@ -53,3 +53,8 @@ Due to the swapping process, it is most efficient to use the iterator returned b
                 print(page.url)
 
 Of course, in some cases, this is unavoidable. Even so, USP is still relatively memory efficient - for the BBC website the entire page list consumes approximately 560MiB of memory (compared to the plaintext files which are approximately 370MiB).
+
+Streaming Single Urlsets
+-------------------------
+
+When you only need to process the pages of one XML ``urlset`` one at a time (for example inserting each URL into a database), :doc:`the streaming parser <streaming>` goes one step further: it reads a caller-provided binary stream in small chunks and yields each :class:`~usp.objects.page.SitemapPage` as soon as its closing ``</url>`` tag is parsed, retaining only the current entry and a read-ahead buffer instead of any page list. Gzip input is decompressed incrementally too.

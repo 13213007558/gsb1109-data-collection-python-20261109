@@ -103,6 +103,9 @@ select = [
 "**/tests/*" = [
     "T20", # Allow print in tests
 ]
+"scripts/*" = [
+    "T20", # Standalone reproduction/reporting scripts print their results
+]
 
 [tool.pytest.ini_options]
 junit_suite_name = "ultimate-sitemap-parser"

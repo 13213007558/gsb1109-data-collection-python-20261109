@@ -56,6 +56,103 @@ from .web_client.requests_client import RequestsWebClient
 log = logging.getLogger(__name__)
 
 
+def _create_hardened_xml_parser(
+    namespace_separator: str,
+    encoding: str | None = None,
+) -> xml.parsers.expat.XMLParserType:
+    """Create an Expat parser configured to refuse XML features that sitemaps must never use.
+
+    Sitemaps are plain XML documents without DTDs or entity declarations, so
+    DOCTYPE/ENTITY declarations and external (parameter) entities are rejected
+    to make XML expansion and external file/network resolution impossible.
+    """
+    parser = xml.parsers.expat.ParserCreate(
+        encoding=encoding, namespace_separator=namespace_separator
+    )
+
+    def _xml_hardening_handler(handler: str):
+        def _hardening_handler(*args, **kwargs):
+            raise SitemapXMLParsingException(
+                f"Sitemap contained unexpected non-standard XML {handler}. Parsing not supported for security reasons."
+            )
+
+        return _hardening_handler
+
+    parser.StartDoctypeDeclHandler = _xml_hardening_handler("DOCTYPE")
+    parser.EntityDeclHandler = _xml_hardening_handler("ENTITY")
+    parser.SetParamEntityParsing(xml.parsers.expat.XML_PARAM_ENTITY_PARSING_NEVER)
+
+    def _external_entity_ref_handler(*args, **kwargs):
+        raise SitemapXMLParsingException(
+            "Sitemap contained an external XML entity reference. Parsing not supported for security reasons."
+        )
+
+    # Expat never resolves external entities itself, but refuse them explicitly so that a
+    # malformed document can never trigger file or network access through a custom handler.
+    parser.ExternalEntityRefHandler = _external_entity_ref_handler
+
+    return parser
+
+
+def _normalize_xml_element_name(
+    name: str,
+    namespace_separator: str,
+    is_non_ns_sitemap: bool,
+) -> tuple[str, bool]:
+    """Normalize an Expat namespace-prefixed element name to USP's internal namespace prefixes.
+
+    :param name: Namespace URL plus XML element name, e.g.
+        ``"http://www.sitemaps.org/schemas/sitemap/0.9 loc"``.
+    :param namespace_separator: Separator used when creating the Expat parser.
+    :param is_non_ns_sitemap: Whether a root element without a sitemap namespace
+        has already been encountered.
+    :return: Tuple of the normalized name (e.g. ``"sitemap:loc"``) and the updated
+        value of the non-namespace flag.
+    """
+
+    name_parts = name.split(namespace_separator)
+
+    if len(name_parts) == 1:
+        namespace_url = ""
+        name = name_parts[0]
+
+    elif len(name_parts) == 2:
+        namespace_url = name_parts[0]
+        name = name_parts[1]
+
+    else:
+        raise SitemapXMLParsingException(
+            f"Unable to determine namespace for element '{name}'"
+        )
+
+    if "/sitemap/" in namespace_url:
+        name = f"sitemap:{name}"
+    elif "/sitemap-news/" in namespace_url:
+        name = f"news:{name}"
+    elif "/sitemap-image/" in namespace_url:
+        name = f"image:{name}"
+    elif "/sitemap-video/" in namespace_url:
+        name = f"video:{name}"
+    elif name in {"urlset", "sitemapindex"}:
+        # XML sitemap root tag but namespace is not set
+        is_non_ns_sitemap = True
+        log.warning(
+            f'XML sitemap root tag {name} detected without expected xmlns (value is "{namespace_url}"), '
+            f"assuming is an XML sitemap."
+        )
+        name = f"sitemap:{name}"
+    elif is_non_ns_sitemap:
+        # Flag has previously been set and no other namespace matched,
+        # assume this should be in the sitemap namespace
+        log.debug(f"Assuming {name} should be in sitemap namespace")
+        name = f"sitemap:{name}"
+    else:
+        # We don't care about the rest of the namespaces, so just keep the plain element name
+        pass
+
+    return name, is_non_ns_sitemap
+
+
 class SitemapFetcher:
     """
     Fetches and parses the sitemap at a given URL, and any declared sub-sitemaps.
@@ -442,24 +539,12 @@ class XMLSitemapParser(AbstractSitemapParser):
         self._is_non_ns_sitemap = False
 
     def sitemap(self) -> AbstractSitemap:
-        parser = xml.parsers.expat.ParserCreate(
+        parser = _create_hardened_xml_parser(
             namespace_separator=self.__XML_NAMESPACE_SEPARATOR
         )
         parser.StartElementHandler = self._xml_element_start
         parser.EndElementHandler = self._xml_element_end
         parser.CharacterDataHandler = self._xml_char_data
-
-        def _xml_hardening_handler(handler: str):
-            def _hardening_handler(*args, **kwargs):
-                raise SitemapXMLParsingException(
-                    f"Sitemap contained unexpected non-standard XML {handler}. Parsing not supported for security reasons."
-                )
-
-            return _hardening_handler
-
-        parser.StartDoctypeDeclHandler = _xml_hardening_handler("DOCTYPE")
-        parser.EntityDeclHandler = _xml_hardening_handler("ENTITY")
-        parser.SetParamEntityParsing(xml.parsers.expat.XML_PARAM_ENTITY_PARSING_NEVER)
 
         try:
             is_final = True
@@ -492,47 +577,11 @@ class XMLSitemapParser(AbstractSitemapParser):
         :param name: Namespace URL plus XML element name, e.g. "http://www.sitemaps.org/schemas/sitemap/0.9 loc"
         :return: Internal namespace name plus element name, e.g. "sitemap loc"
         """
-
-        name_parts = name.split(self.__XML_NAMESPACE_SEPARATOR)
-
-        if len(name_parts) == 1:
-            namespace_url = ""
-            name = name_parts[0]
-
-        elif len(name_parts) == 2:
-            namespace_url = name_parts[0]
-            name = name_parts[1]
-
-        else:
-            raise SitemapXMLParsingException(
-                f"Unable to determine namespace for element '{name}'"
-            )
-
-        if "/sitemap/" in namespace_url:
-            name = f"sitemap:{name}"
-        elif "/sitemap-news/" in namespace_url:
-            name = f"news:{name}"
-        elif "/sitemap-image/" in namespace_url:
-            name = f"image:{name}"
-        elif "/sitemap-video/" in namespace_url:
-            name = f"video:{name}"
-        elif name in {"urlset", "sitemapindex"}:
-            # XML sitemap root tag but namespace is not set
-            self._is_non_ns_sitemap = True
-            log.warning(
-                f'XML sitemap root tag {name} detected without expected xmlns (value is "{namespace_url}"), '
-                f"assuming is an XML sitemap."
-            )
-            name = f"sitemap:{name}"
-        elif self._is_non_ns_sitemap:
-            # Flag has previously been set and no other namespace matched,
-            # assume this should be in the sitemap namespace
-            log.debug(f"Assuming {name} should be in sitemap namespace")
-            name = f"sitemap:{name}"
-        else:
-            # We don't care about the rest of the namespaces, so just keep the plain element name
-            pass
-
+        name, self._is_non_ns_sitemap = _normalize_xml_element_name(
+            name=name,
+            namespace_separator=self.__XML_NAMESPACE_SEPARATOR,
+            is_non_ns_sitemap=self._is_non_ns_sitemap,
+        )
         return name
 
     def _xml_element_start(self, name: str, attrs: dict[str, str]) -> None:
@@ -1086,6 +1135,62 @@ class PagesXMLSitemapParser(AbstractXMLSitemapParser):
         pages_sitemap = PagesXMLSitemap(url=self._url, pages=pages)
 
         return pages_sitemap
+
+
+class StreamingPagesXMLSitemapParser(PagesXMLSitemapParser):
+    """Pages XML urlset parser that hands every completed page to a callback instead of storing it.
+
+    Reuses the full element handling and page construction of
+    :class:`PagesXMLSitemapParser`, so the emitted :class:`~usp.objects.page.SitemapPage`
+    objects keep exactly the same semantics as the tree-based API. Only a single
+    ``<url>`` entry is held in memory at a time.
+    """
+
+    __slots__ = ["_on_page", "_deduplicate", "_seen_urls"]
+
+    def __init__(self, url: str, on_page, deduplicate: bool = True):
+        """
+        :param url: URL of the sitemap being parsed, used for logging only.
+        :param on_page: Callable invoked with each completed
+            :class:`~usp.objects.page.SitemapPage` as soon as its ``<url>``
+            element is closed.
+        :param deduplicate: Whether to skip pages whose URL was already emitted,
+            matching the de-duplication behavior of :class:`PagesXMLSitemapParser`.
+            Disable for fully bounded memory on very large documents.
+        """
+        super().__init__(url=url)
+        self._on_page = on_page
+        self._deduplicate = deduplicate
+        self._seen_urls = set()
+
+    def xml_element_end(self, name: str) -> None:
+        if name == "sitemap:url":
+            page_row = self._current_page
+            if page_row is None:
+                raise SitemapXMLParsingException(
+                    "Page is expected to be set at the end of <sitemap:url>."
+                )
+
+            page_url = page_row.url
+            if not self._deduplicate or page_url not in self._seen_urls:
+                if self._deduplicate:
+                    self._seen_urls.add(page_url)
+                page = page_row.page()
+                if page is not None:
+                    self._on_page(page)
+
+            self._current_page = None
+            # Reset character-data state exactly like the parent implementation does
+            # for every closed element.
+            AbstractXMLSitemapParser.xml_element_end(self, name=name)
+            return
+
+        super().xml_element_end(name=name)
+
+    def sitemap(self) -> AbstractSitemap:
+        raise NotImplementedError(
+            "Streaming parser emits pages through its callback and cannot build a sitemap tree."
+        )
 
 
 class PagesRSSSitemapParser(AbstractXMLSitemapParser):
