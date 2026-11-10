@@ -27,6 +27,12 @@ Form
     :undoc-members:
     :special-members: __setitem__
 
+MultipartEncoder
+----------------
+
+.. autoclass:: MultipartEncoder
+    :members:
+
 Exceptions
 ----------
 .. autoexception:: LinkNotFoundError

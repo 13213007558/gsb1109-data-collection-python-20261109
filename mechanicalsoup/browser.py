@@ -13,6 +13,7 @@ import requests
 
 from .__version__ import __title__, __version__
 from .form import Form
+from .multipart import MultipartEncoder
 from .utils import LinkNotFoundError, is_disabled, is_multipart_file_upload
 
 
@@ -215,8 +216,19 @@ class Browser:
         return request_kwargs
 
     @classmethod
-    def get_request_kwargs(cls, form, url=None, submit=None, **kwargs):
-        """Extract input data from the form."""
+    def get_request_kwargs(cls, form, url=None, submit=None,
+                           stream_multipart=False, **kwargs):
+        """Extract input data from the form.
+
+        :param stream_multipart: If True and the form is submitted with
+            the multipart/form-data enctype, encode the body iteratively
+            with mechanicalsoup.multipart.MultipartEncoder instead of
+            letting Requests build the whole body in memory. Fields and
+            files are then sent in the order they appear in the form,
+            and file objects are read chunk by chunk without being
+            closed. Defaults to False, which preserves the historical
+            behavior of letting Requests encode the body.
+        """
         method = str(form.get("method", "get"))
         action = form.get("action")
 
@@ -241,6 +253,7 @@ class Browser:
         data = [(k, v) for k, v in data.items()]
 
         multipart = form.get("enctype", "") == "multipart/form-data"
+        streaming = stream_multipart and multipart and method.lower() != "get"
 
         # Process form tags in the order that they appear on the page,
         # skipping those tags that do not have a name-attribute.
@@ -285,7 +298,12 @@ class Browser:
                     # If content is the empty string, we still pass it
                     # for consistency with browsers (see
                     # https://github.com/MechanicalSoup/MechanicalSoup/issues/250).
-                    files[name] = (filename, content)
+                    if streaming:
+                        # Keep files in the same ordered list as regular
+                        # fields so that parts are sent in form order.
+                        data.append((name, (filename, content)))
+                    else:
+                        files[name] = (filename, content)
                 else:
                     if isinstance(value, io.IOBase):
                         value = os.path.basename(getattr(value, "name", ""))
@@ -321,6 +339,18 @@ class Browser:
 
         if method.lower() == "get":
             kwargs["params"] = data
+        elif streaming:
+            # Merge the caller-supplied files (if any) after the form
+            # fields, and encode everything as a streaming multipart body.
+            parts = data + list(files.items())
+            encoder = MultipartEncoder(parts)
+            kwargs["data"] = encoder
+            headers = kwargs.setdefault("headers", {})
+            if not any(k.lower() == "content-type" for k in headers):
+                headers["Content-Type"] = encoder.content_type
+            # Requests raises NotImplementedError if files are passed
+            # together with a streamed body; everything is in the encoder.
+            files = {}
         else:
             kwargs["data"] = data
 
@@ -329,7 +359,7 @@ class Browser:
         # content. Since Requests doesn't have yet a feature to choose
         # enctype, we have to use tricks to make it behave as we want
         # This code will be updated if Requests implements it.
-        if multipart and not files:
+        if multipart and not files and not streaming:
             # Requests will switch to "multipart/form-data" only if
             # files pass the `if files:` test, so in this case we use
             # a modified dict that passes the if test even if empty.
@@ -347,10 +377,12 @@ class Browser:
         form,
         url=None,
         submit=None,
+        stream_multipart=False,
         **kwargs,
     ) -> requests.Response:
         """Extract input data from the form to pass to a Requests session."""
-        request_kwargs = self.get_request_kwargs(form, url, submit, **kwargs)
+        request_kwargs = self.get_request_kwargs(
+            form, url, submit, stream_multipart=stream_multipart, **kwargs)
         return self.session.request(**request_kwargs)
 
     def submit(
@@ -372,6 +404,10 @@ class Browser:
         :param btnName: Passed to :func:`Form.choose_submit` to choose the
             element of the form to use for submission. If not ``None``, will
             override any existing chosen submit in the form.
+        :param stream_multipart: If True, multipart/form-data submissions
+            are encoded iteratively (see
+            :func:`Browser.get_request_kwargs`), which keeps memory usage
+            low when uploading large files. Defaults to False.
         :param \\*\\*kwargs: Arguments forwarded to `requests.Session.request
             <http://docs.python-requests.org/en/master/api/#requests.Session.request>`__.
             If `files`, `params` (with GET), or `data` (with POST) are
